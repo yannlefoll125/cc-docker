@@ -75,7 +75,7 @@ This gives `./build.sh <TAB>` completion against the live list of images. The im
 **1. Build the images:**
 
 ```bash
-docker-compose -f .cc-docker/docker-compose.yml build
+./build.sh
 ```
 
 **2. Run Claude Code:**
@@ -84,7 +84,7 @@ docker-compose -f .cc-docker/docker-compose.yml build
 docker-compose -f .cc-docker/docker-compose.yml run cc
 ```
 
-Tip: set `COMPOSE_FILE=.cc-docker/docker-compose.yml` in your shell (e.g. in `.bashrc`) to drop the `-f` flag from every command.
+Tip: set `alias cc=docker compose -f .cc-docker/docker-compose.yml run` in your shell (e.g. in `.bashrc`) to be able to run `cc` easily from the project root.
 
 This mounts your project files, Claude credentials, and auth state into the container. See [The cc-base environment](#the-cc-base-environment) for how ownership and credentials work.
 
@@ -182,8 +182,8 @@ services:
 Then from your project root:
 
 ```bash
-# Build cc-base first (only needed once)
-docker-compose -f /path/to/cc-docker/.cc-docker/docker-compose.yml build
+# Build cc-base first (only needed once), from the cc-docker checkout
+/path/to/cc-docker/build.sh
 
 # Start Claude Code in your project
 docker-compose -f .cc-docker/docker-compose.yml run cc
