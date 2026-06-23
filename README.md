@@ -42,6 +42,30 @@ Images are auto-discovered from `images/*/Dockerfile`. Dependencies are inferred
 
 Adding a new image is just: create `images/<name>/Dockerfile` — no edits to `build.sh` required.
 
+### `init-cc.sh`
+
+Interactive setup for a new project. Add two lines to your `~/.bashrc`:
+
+```bash
+export CC_DOCKER_DIR=/path/to/cc-docker
+source "$CC_DOCKER_DIR/init-cc.sh"
+```
+
+Then, from any project directory, run:
+
+```bash
+init-cc
+```
+
+It will prompt for:
+
+- **Project root** (defaults to the current directory)
+- **Image** — numbered menu, auto-discovered from the `images/` directory
+- **Git user name and email** (defaults to your global `git config` values)
+- **Whether to add `.cc-docker/` to `.gitignore`**
+
+When done, `.cc-docker/docker-compose.yml` and `.cc-docker/.env` are written to the chosen project root, ready to use.
+
 ### Shell completion
 
 Add one line to your `~/.bashrc` (use the actual path where you cloned this repo):
@@ -66,8 +90,10 @@ This gives `./build.sh <TAB>` completion against the live list of images. The im
     │   └── Dockerfile           # Debian Bookworm slim + Claude Code CLI (cc-base)
     ├── node20/
     │   └── Dockerfile           # cc-base + Node.js 20 (cc-node20)
-    └── vue3/
-        └── Dockerfile           # cc-node20 + Yarn via corepack (cc-vue3)
+    ├── vue3/
+    │   └── Dockerfile           # cc-node20 + Yarn via corepack (cc-vue3)
+    └── zulu21/
+        └── Dockerfile           # cc-base + Azul Zulu JDK 21 (cc-zulu21)
 ```
 
 ## Usage
@@ -95,6 +121,7 @@ This mounts your project files, Claude credentials, and auth state into the cont
 | `cc-base` | Debian Bookworm slim + Claude Code CLI (installed via official install script). General-purpose starting point. |
 | `cc-node20` | Extends `cc-base` with Node.js 20 from NodeSource. |
 | `cc-vue3` | Extends `cc-node20` with Yarn (via corepack). Use for Vue 3 projects. |
+| `cc-zulu21` | Extends `cc-base` with Azul Zulu JDK 21. Use for Java projects. |
 
 ### Dependency tree
 
@@ -102,8 +129,9 @@ This mounts your project files, Claude credentials, and auth state into the cont
 
 ```
 cc-base
-└── cc-node20
-    └── cc-vue3
+├── cc-node20
+│   └── cc-vue3
+└── cc-zulu21
 ```
 
 ## The cc-base environment
@@ -152,7 +180,7 @@ docker run -it --rm \
 
 ## Using cc-claude in another project
 
-The `.cc-docker/docker-compose.yml` in this repo shows the recommended pattern for integrating `cc-base` into any project. Copy the whole `.cc-docker/` directory into your project root and adjust as needed:
+The quickest way is `init-cc` (see [Scripts](#scripts) above). If you prefer to do it manually, copy the whole `.cc-docker/` directory into your project root and adjust as needed:
 
 ```bash
 cp -r /path/to/cc-docker/.cc-docker /your/project/
