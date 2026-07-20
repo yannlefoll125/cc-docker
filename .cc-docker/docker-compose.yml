@@ -13,3 +13,4 @@ services:
       - ${PWD}:${PWD}
       - ~/.claude:/home/hostuser/.claude
       - ~/.claude.json:/home/hostuser/.claude.json
+      - /tmp/Spectacle.*:/tmp/Spectacle.*

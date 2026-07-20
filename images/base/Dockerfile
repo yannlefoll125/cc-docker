@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
     gosu \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
@@ -17,6 +18,8 @@ RUN chmod +x /cc-wrapper.sh
 
 COPY run-as-hostuser.sh /run-as-hostuser.sh
 RUN chmod +x /run-as-hostuser.sh
+
+COPY sandbox.md /sandbox.md
 
 
 ENTRYPOINT ["/cc-wrapper.sh"]

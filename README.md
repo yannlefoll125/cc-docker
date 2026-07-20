@@ -149,6 +149,8 @@ HOST_GID=$(stat -c "%g" "$PROJECT_DIR")
 
 It then creates a `hostgroup`/`hostuser` pair with those IDs and drops privileges to that user via [gosu](https://packages.debian.org/bookworm/gosu) before running `claude`. The result: any file Claude creates inside the project directory is owned by you on the host — no `root`-owned artifacts, no `chown` cleanup after the container exits.
 
+You don't have to bind-mount the whole project — mounting only selected subdirectories (to limit what Claude can see) is a supported setup too. If `$PROJECT_DIR` itself isn't bind-mounted, Docker creates it inside the container owned by `root`, so the entrypoint falls back to the always-mounted `~/.claude`/`~/.claude.json` mounts to recover your real host UID/GID.
+
 The same ownership logic applies to the config mounts. `~/.claude` and `~/.claude.json` are mounted into `/home/hostuser/.claude` and `/home/hostuser/.claude.json`, so credentials and settings are read and written with your UID — they stay in sync with your host login without any permission tricks.
 
 ### The two-phase entrypoint

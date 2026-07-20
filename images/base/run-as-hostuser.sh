@@ -7,5 +7,5 @@ env
 git config --global --add safe.directory "$PROJECT_DIR"
 
 clear
-claude "$@"
+claude --append-system-prompt "$(cat /sandbox.md)" "$@"
 clear
