@@ -227,6 +227,64 @@ The volume mounts are the key pieces:
 | `~/.claude:/home/hostuser/.claude` | Persists Claude credentials and settings; mounted at the `hostuser` home path so ownership matches your host login |
 | `~/.claude.json:/home/hostuser/.claude.json` | Persists Claude's top-level auth/config state; same ownership rationale |
 
+## Developing cc-docker itself
+
+Working on cc-docker means running `./build.sh` (`docker build`), `docker
+compose`, and `init-cc.sh` — all of which need Docker access. The stock
+`cc-base` (and every other image in `images/`) deliberately has neither the
+`docker` CLI nor access to a daemon, since giving a project container control
+of the host's Docker daemon is a real capability, not just another mount.
+
+For this repo specifically, `toolchain/dev/` builds a `cc-dev` image that adds
+the `docker` CLI + `docker compose` plugin and talks to the **host's** Docker
+daemon over the mounted socket (Docker-out-of-Docker: containers/images built
+from inside `cc-dev` are ordinary siblings on the host daemon, not nested/
+isolated). It also includes `python3`/`python3-yaml` so you can run
+`toolchain/config/generate-compose.py` directly, without rebuilding the
+`cc-config` image on every edit.
+
+Bootstrap:
+
+```bash
+./build.sh dev            # builds cc-base, then cc-dev, on the host
+docker compose -f .cc-docker/docker-compose.yml run cc
+```
+
+This repo's own `.cc-docker/docker-compose.yml` is already wired for it
+(`image: cc-dev` + a `/var/run/docker.sock:/var/run/docker.sock` mount).
+
+### Why cc-dev is restricted to this repo
+
+Mounting the host's Docker socket grants **root-equivalent access to the host
+daemon** — a container that can talk to the socket can, among other things,
+launch new privileged containers with arbitrary host mounts. That's a much
+bigger capability than the filesystem isolation the rest of cc-docker provides,
+so `cc-dev` is deliberately locked down two ways:
+
+- **Not offered as a choice.** `cc-dev` lives in `toolchain/dev/`, not
+  `images/`. `init-cc`'s image menu only scans `images/*`, so `cc-dev` never
+  shows up as something you'd pick for an ordinary project. (`build.sh` still
+  builds it — it scans both `images/*` and `toolchain/*`.)
+- **Refuses to run outside this repo.** `cc-dev`'s entrypoint
+  (`toolchain/dev/dev-wrapper.sh`) checks for a committed `.cc-docker-dev`
+  marker file at the project root before starting, and exits with an error if
+  it's missing. Only this repo has that marker, so even a compose file that
+  explicitly references `cc-dev` won't start it elsewhere. Copying the marker
+  into another project is a deliberate, explicit way to lift the restriction —
+  it isn't something that happens by accident.
+
+### Caveat: nested mounts don't path-translate
+
+Docker-out-of-Docker means the **host** daemon resolves every bind-mount
+source, not the `cc-dev` container. cc-docker's same-path convention
+(`${PWD}:${PWD}`) and build contexts resolve correctly this way. But a `~`
+in a mount source is expanded by whichever process reads the compose file —
+inside `cc-dev`, `~` is `/home/hostuser`, which the host daemon can't resolve.
+So launching a full nested interactive `cc` session (which mounts
+`~/.claude`) from inside `cc-dev` won't work correctly. Use `cc-dev` for
+building, editing, and non-interactive smoke tests; do full interactive runs
+from the host.
+
 ## Configuration
 
 Claude Code permissions are configured in `.claude/settings.local.json`. Edit this file to adjust which tools and operations Claude is allowed to perform inside the container.

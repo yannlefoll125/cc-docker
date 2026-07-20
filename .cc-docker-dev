@@ -1,0 +1,4 @@
+# Presence of this file authorizes the cc-dev image (toolchain/dev/) to run
+# against this project. cc-dev mounts the host Docker socket, which grants
+# root-equivalent access to the host — do not copy this file into another
+# project unless you deliberately want that image to have that access there.

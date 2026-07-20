@@ -1,7 +1,7 @@
 services:
   cc:
     hostname: cc
-    image: cc-base
+    image: cc-dev
     stdin_open: true
     tty: true
     environment:
@@ -14,3 +14,4 @@ services:
       - ~/.claude:/home/hostuser/.claude
       - ~/.claude.json:/home/hostuser/.claude.json
       - /tmp/Spectacle.*:/tmp/Spectacle.*
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -8,8 +8,9 @@
 #          Builds the target and all its transitive dependencies.
 #          Omit to build every discovered image.
 #
-# Images are discovered from images/*/Dockerfile. Dependencies are inferred
-# from FROM cc-<name> and COPY --from=cc-<name> directives in each Dockerfile.
+# Images are discovered from images/*/Dockerfile and toolchain/*/Dockerfile.
+# Dependencies are inferred from FROM cc-<name> and COPY --from=cc-<name>
+# directives in each Dockerfile.
 # A topological sort ensures dependencies are always built before their
 # dependents. Circular dependencies are detected and reported as errors.
 #
@@ -23,16 +24,22 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ---------------------------------------------------------------------------
-# Discover all images: any subdirectory of images/ that contains a Dockerfile
+# Discover all images: any subdirectory of images/ or toolchain/ that contains
+# a Dockerfile. images/ holds runnable cc-docker base images (also scanned by
+# init-cc.sh for its image-choice menu); toolchain/ holds cc-docker's own
+# tooling images (e.g. cc-config), which must NOT show up in that menu.
 # ---------------------------------------------------------------------------
-declare -A DEPS  # DEPS[name]="dep1 dep2 ..."
+declare -A DEPS     # DEPS[name]="dep1 dep2 ..."
+declare -A IMG_DIR  # IMG_DIR[name]="images/name" or "toolchain/name"
 
 discover_images() {
-  for dockerfile in images/*/Dockerfile; do
+  for dockerfile in images/*/Dockerfile toolchain/*/Dockerfile; do
     [[ -f "$dockerfile" ]] || continue
-    local name
-    name=$(basename "$(dirname "$dockerfile")")
+    local name dir
+    dir=$(dirname "$dockerfile")
+    name=$(basename "$dir")
     DEPS["$name"]=""
+    IMG_DIR["$name"]="$dir"
   done
 }
 
@@ -43,7 +50,7 @@ discover_images() {
 # ---------------------------------------------------------------------------
 build_graph() {
   for name in "${!DEPS[@]}"; do
-    local dockerfile="images/$name/Dockerfile"
+    local dockerfile="${IMG_DIR[$name]}/Dockerfile"
     local seen_deps=""
     while IFS= read -r dep; do
       # dep is the short name after "cc-"
@@ -113,7 +120,7 @@ closure_visit() {
 build_one() {
   local name=$1
   echo ">>> building cc-$name"
-  docker build -t "cc-$name" "images/$name"
+  docker build -t "cc-$name" "${IMG_DIR[$name]}"
 }
 
 # ---------------------------------------------------------------------------
