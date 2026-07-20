@@ -1,7 +1,7 @@
 #!/bin/bash
 # cc-dev root phase: (1) refuse to run outside the cc-docker repo, (2) grant the
-# (soon-to-be-created) hostuser access to the mounted docker socket, then hand
-# off to the base entrypoint UNCHANGED.
+# (soon-to-be-created) hostuser access to the mounted docker socket, (3) hand
+# off to the base entrypoint with a cleanup hook, then run it.
 
 # (1) Sentinel guard — cc-dev is restricted to the cc-docker repo. It grants
 # host-daemon (root-equivalent) access via the docker socket, so it must not be
@@ -37,4 +37,33 @@ if [ -S /var/run/docker.sock ]; then
   fi
 fi
 
-exec /cc-wrapper.sh "$@"
+# (3) Shutdown hook — stop any leftover cc-dev=1 containers (created via the
+# docker-shim on the mounted host socket) when this session ends. This must
+# run here rather than further down the chain: every step below this one uses
+# `exec`, so this is the last process instance that's actually still *this*
+# script by the time the session ends — traps set before an exec are
+# discarded along with the replaced process image. Not `exec`ing here also
+# keeps this the container's real PID 1.
+#
+# The child runs in the background, with an explicit `wait`, rather than as a
+# plain foreground command: bash defers a pending trap until a foreground
+# command completes, so `docker stop`'s SIGTERM would otherwise sit unhandled
+# until cc-wrapper.sh's whole chain (claude included) exits on its own. `wait`
+# is interruptible, so forwarding the signal to the child from the trap and
+# waiting on it gets cleanup to run promptly instead.
+cleanup() {
+  ids=$(docker ps -q --filter label=cc-dev 2>/dev/null)
+  [ -n "$ids" ] && docker stop $ids >/dev/null 2>&1
+}
+trap cleanup EXIT
+
+child=""
+forward_signal() {
+  [ -n "$child" ] && kill -TERM "$child" 2>/dev/null
+}
+trap forward_signal INT TERM
+
+/cc-wrapper.sh "$@" &
+child=$!
+wait "$child"
+exit $?

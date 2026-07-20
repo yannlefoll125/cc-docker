@@ -372,6 +372,14 @@ docker images --filter label=cc-dev       # images built from inside cc-dev
 Everything else (`ps`, `images`, `inspect`, ...) passes through the shim
 unchanged.
 
+`cc-dev`'s entrypoint (`toolchain/dev/dev-wrapper.sh`) also stops any
+still-running `cc-dev=1` containers when the session ends — normal exit or
+`docker stop`/`compose down` on the `cc-dev` container itself — so a run/create
+you forgot to clean up doesn't linger on the host daemon. This doesn't cover
+`docker compose` containers started from inside `cc-dev`, since those are
+tracked by their own `com.docker.compose.project=cc-dev` label rather than
+`cc-dev=1`.
+
 ## Configuration
 
 Claude Code permissions are configured in `.claude/settings.local.json`. Edit this file to adjust which tools and operations Claude is allowed to perform inside the container.
