@@ -13,4 +13,12 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 COPY dev-wrapper.sh /dev-wrapper.sh
 RUN chmod +x /dev-wrapper.sh
 
+# Shadow docker-ce-cli's /usr/bin/docker with a shim (/usr/local/bin precedes
+# /usr/bin on PATH) that tags every container/image this image creates on the
+# host daemon, so they can be told apart from ones started natively. See
+# docker-shim.sh for details. COMPOSE_PROJECT_NAME covers `docker compose`.
+COPY docker-shim.sh /usr/local/bin/docker
+RUN chmod +x /usr/local/bin/docker
+ENV COMPOSE_PROJECT_NAME=cc-dev
+
 ENTRYPOINT ["/dev-wrapper.sh"]

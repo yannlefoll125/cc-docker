@@ -348,6 +348,30 @@ So launching a full nested interactive `cc` session (which mounts
 building, editing, and non-interactive smoke tests; do full interactive runs
 from the host.
 
+### Telling cc-dev's containers/images apart from native ones
+
+Since `cc-dev` shares the host daemon, `docker ps`/`docker images` on the host
+mixes containers/images it creates in with ones started natively. `cc-dev`
+shadows `/usr/bin/docker` with a shim (`toolchain/dev/docker-shim.sh`) that
+tags everything it creates:
+
+- `docker run`/`docker create` get a `cc-dev-<subcommand>-<id>` name (unless
+  you passed your own `--name`) plus a `cc-dev=1` label.
+- `docker build` gets the `cc-dev=1` label (the image keeps its own `-t` tag).
+- `docker compose` runs get named via `COMPOSE_PROJECT_NAME=cc-dev` (set as an
+  image `ENV`), so compose containers come out `cc-dev-<service>-<n>`.
+
+Discriminate on the host with:
+
+```bash
+docker ps -a --filter name=^cc-dev       # anything named with the cc-dev prefix
+docker ps -a --filter label=cc-dev        # run/create/compose containers
+docker images --filter label=cc-dev       # images built from inside cc-dev
+```
+
+Everything else (`ps`, `images`, `inspect`, ...) passes through the shim
+unchanged.
+
 ## Configuration
 
 Claude Code permissions are configured in `.claude/settings.local.json`. Edit this file to adjust which tools and operations Claude is allowed to perform inside the container.
