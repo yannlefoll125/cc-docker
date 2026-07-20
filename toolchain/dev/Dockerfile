@@ -7,7 +7,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        docker-ce-cli docker-compose-plugin python3 python3-yaml \
+        docker-ce-cli docker-compose-plugin python3 python3-yaml python3-jsonschema \
     && rm -rf /var/lib/apt/lists/*
 
 COPY dev-wrapper.sh /dev-wrapper.sh

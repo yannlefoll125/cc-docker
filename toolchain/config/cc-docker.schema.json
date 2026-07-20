@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "cc-docker project config",
+  "description": "Schema for .cc-docker/cc-docker.yml — consumed by the cc-config tool (toolchain/config/generate-compose.py) to generate .cc-docker/docker-compose.yml. See the README section 'Configuring cc-docker' for details.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image"],
+  "properties": {
+    "image": {
+      "type": "string",
+      "description": "Docker image to run as the `cc` service, e.g. cc-node20."
+    },
+    "git": {
+      "type": "object",
+      "description": "Git identity to configure inside the container.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Value for git's user.name, exposed to the container as GIT_USER_NAME."
+        },
+        "email": {
+          "type": "string",
+          "description": "Value for git's user.email, exposed to the container as GIT_USER_EMAIL."
+        }
+      }
+    },
+    "env": {
+      "type": "object",
+      "description": "Extra environment variables merged into the `cc` service.",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"]
+      }
+    },
+    "readonly": {
+      "type": "boolean",
+      "description": "If true, all project bind mounts declared in `mounts` are mounted read-only.",
+      "default": false
+    },
+    "mounts": {
+      "type": "array",
+      "description": "Project paths to bind-mount into the container.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to mount, relative to the project root. Use \".\" to mount the whole project root."
+          },
+          "exclude": {
+            "type": "array",
+            "description": "Glob patterns (relative to this mount) to shadow out with a tmpfs (directories) or a read-only /dev/null bind (files).",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "extra_mounts": {
+      "type": "array",
+      "description": "Raw docker compose volume entries, appended verbatim to the generated `volumes` list. No further validation is applied.",
+      "items": {
+        "type": ["object", "string"]
+      }
+    }
+  }
+}

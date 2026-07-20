@@ -227,6 +227,69 @@ The volume mounts are the key pieces:
 | `~/.claude:/home/hostuser/.claude` | Persists Claude credentials and settings; mounted at the `hostuser` home path so ownership matches your host login |
 | `~/.claude.json:/home/hostuser/.claude.json` | Persists Claude's top-level auth/config state; same ownership rationale |
 
+## Configuring cc-docker (`cc-docker.yml`)
+
+The compose file above can be hand-written (as `init-cc` does), or generated from a shorter
+declarative config by `cc-config` (`toolchain/config/`) — a small tool that reads
+`.cc-docker/cc-docker.yml` and writes `.cc-docker/docker-compose.yml`.
+
+`cc-docker.yml` fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|--------------|
+| `image` | string | yes | Docker image to run as the `cc` service, e.g. `cc-node20`. |
+| `git.name` / `git.email` | string | no | Git identity, exposed to the container as `GIT_USER_NAME` / `GIT_USER_EMAIL`. |
+| `env` | map | no | Extra environment variables merged into the `cc` service. |
+| `readonly` | boolean | no | If true, all mounts declared in `mounts` are read-only. Defaults to `false`. |
+| `mounts` | list | no | Project paths to bind-mount. Each entry is `{path, exclude}`: `path` (required) is relative to the project root — use `"."` for the whole project; `exclude` is a list of glob patterns (relative to `path`) to shadow out with a `tmpfs` (directories) or a read-only `/dev/null` bind (files). |
+| `extra_mounts` | list | no | Raw docker compose volume entries, appended verbatim — no validation. |
+
+Example:
+
+```yaml
+image: cc-node20
+git:
+  name: Your Name
+  email: you@example.com
+mounts:
+  - path: .
+    exclude:
+      - node_modules
+      - .env
+```
+
+`cc-config` validates `cc-docker.yml` against a JSON Schema
+(`toolchain/config/cc-docker.schema.json`) before generating anything — an unknown key, a missing
+`image`, or a `mounts` entry without a `path` all fail with a readable error instead of silently
+producing a broken compose file.
+
+To generate the compose file by hand (until the `cc` launcher wraps this step):
+
+```bash
+docker run --rm \
+  -e PROJECT_DIR="$PWD" \
+  -v "$PWD/.cc-docker:/out" \
+  -v "$PWD:/project:ro" \
+  cc-config
+```
+
+### IntelliJ: schema-validated editing
+
+`cc-docker.schema.json` is [JSON Schema draft-07](https://json-schema.org/specification-links.html#draft-7),
+which IntelliJ supports natively — no plugin needed. To get autocomplete and inline validation
+while editing `cc-docker.yml`:
+
+1. **Settings → Languages & Frameworks → Schemas and DTDs → JSON Schema Mappings**
+2. Click **+**, add a mapping:
+   - **Schema file**: `toolchain/config/cc-docker.schema.json` (path inside your `cc-docker` checkout)
+   - **Schema version**: `JSON Schema version 7`
+   - **File path pattern**: `cc-docker.yml`
+3. Apply. Any open `.cc-docker/cc-docker.yml` now gets key completion and red squiggles on
+   unknown/misspelled keys.
+
+This is a per-developer IDE setting (`.idea/` is gitignored), so each contributor registers it
+once locally.
+
 ## Developing cc-docker itself
 
 Working on cc-docker means running `./build.sh` (`docker build`), `docker
@@ -239,9 +302,9 @@ For this repo specifically, `toolchain/dev/` builds a `cc-dev` image that adds
 the `docker` CLI + `docker compose` plugin and talks to the **host's** Docker
 daemon over the mounted socket (Docker-out-of-Docker: containers/images built
 from inside `cc-dev` are ordinary siblings on the host daemon, not nested/
-isolated). It also includes `python3`/`python3-yaml` so you can run
-`toolchain/config/generate-compose.py` directly, without rebuilding the
-`cc-config` image on every edit.
+isolated). It also includes `python3`/`python3-yaml`/`python3-jsonschema` so
+you can run `toolchain/config/generate-compose.py` directly, without
+rebuilding the `cc-config` image on every edit.
 
 Bootstrap:
 
