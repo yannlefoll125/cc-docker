@@ -44,12 +44,17 @@ Adding a new image is just: create `images/<name>/Dockerfile` — no edits to `b
 
 ### `init-cc.sh`
 
-Interactive setup for a new project. Add two lines to your `~/.bashrc`:
+Interactive setup for a new project. Source it into your shell first — either run `make install`
+from this repo (checks whether it's already sourced in `~/.bashrc` and appends it if not, no-op
+if it's already there), or add the two lines yourself:
 
 ```bash
 export CC_DOCKER_DIR=/path/to/cc-docker
 source "$CC_DOCKER_DIR/init-cc.sh"
 ```
+
+Sourcing this file defines two shell functions: `init-cc` (setup, below) and `cc` (the launcher,
+see [`cc` (the launcher)](#cc-the-launcher)).
 
 Then, from any project directory, run:
 
@@ -62,9 +67,31 @@ It will prompt for:
 - **Project root** (defaults to the current directory)
 - **Image** — numbered menu, auto-discovered from the `images/` directory
 - **Git user name and email** (defaults to your global `git config` values)
+- **Configuration type** — *cc-docker native config (`cc-docker.yml`)*, preselected, or *raw
+  `docker-compose.yml`*
 - **Whether to add `.cc-docker/` to `.gitignore`**
 
-When done, `.cc-docker/docker-compose.yml` and `.cc-docker/.env` are written to the chosen project root, ready to use.
+Native writes only `.cc-docker/cc-docker.yml` — the `cc` launcher generates
+`docker-compose.yml` from it on demand (see [Configuring cc-docker](#configuring-cc-docker-cc-dockeryml)).
+Raw writes `.cc-docker/docker-compose.yml` + `.cc-docker/.env` directly, same as before — edit
+those by hand as needed.
+
+When done, run Claude Code with `cc` from the project root (or any subdirectory).
+
+### `cc` (the launcher)
+
+Defined by `init-cc.sh` alongside `init-cc`. On each invocation it:
+
+1. Walks up from the current directory to find `.cc-docker/`, so it works from any subdirectory
+   of the project.
+2. If `.cc-docker/cc-docker.yml` exists, regenerates `.cc-docker/docker-compose.yml` from it via
+   the `cc-config` image (skipped if `docker-compose.yml` is already newer than `cc-docker.yml`).
+3. Otherwise, if a hand-written `.cc-docker/docker-compose.yml` exists, uses it directly — no
+   regeneration. This is what keeps existing raw-compose projects working unchanged.
+4. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
+
+So with a native `cc-docker.yml`, editing it and re-running `cc` always picks up the change —
+no manual regenerate step needed.
 
 ### Shell completion
 
@@ -104,14 +131,20 @@ This gives `./build.sh <TAB>` completion against the live list of images. The im
 ./build.sh
 ```
 
-**2. Run Claude Code:**
+**2. Set up your project** (see [`init-cc.sh`](#init-ccsh) — prompts for image, git identity, and
+config type):
 
 ```bash
-docker-compose -f .cc-docker/docker-compose.yml run cc
+init-cc
 ```
 
-Tip: set `alias cc=docker compose -f .cc-docker/docker-compose.yml run` in your shell (e.g. in `.bashrc`) to be able to run `cc` easily from the project root.
+**3. Run Claude Code:**
 
+```bash
+cc
+```
+
+`cc` works from the project root or any subdirectory (see [`cc` (the launcher)](#cc-the-launcher)).
 This mounts your project files, Claude credentials, and auth state into the container. See [The cc-base environment](#the-cc-base-environment) for how ownership and credentials work.
 
 ## Images
@@ -229,9 +262,12 @@ The volume mounts are the key pieces:
 
 ## Configuring cc-docker (`cc-docker.yml`)
 
-The compose file above can be hand-written (as `init-cc` does), or generated from a shorter
-declarative config by `cc-config` (`toolchain/config/`) — a small tool that reads
-`.cc-docker/cc-docker.yml` and writes `.cc-docker/docker-compose.yml`.
+`.cc-docker/docker-compose.yml` is either hand-written (the *raw* option in `init-cc`) or a
+generated, disposable artifact regenerated on every `cc` invocation from a shorter declarative
+config, `.cc-docker/cc-docker.yml` (the *native* option, preselected). The generation is done by
+`cc-config` (`toolchain/config/`) — a small tool that reads `cc-docker.yml` and writes
+`docker-compose.yml`. When native, don't hand-edit `docker-compose.yml` — edit `cc-docker.yml`
+instead, `cc` regenerates it for you.
 
 `cc-docker.yml` fields:
 
@@ -263,7 +299,8 @@ mounts:
 `image`, or a `mounts` entry without a `path` all fail with a readable error instead of silently
 producing a broken compose file.
 
-To generate the compose file by hand (until the `cc` launcher wraps this step):
+The `cc` launcher does this automatically on every invocation (see [`cc` (the launcher)](#cc-the-launcher)).
+To generate it by hand instead (e.g. for debugging):
 
 ```bash
 docker run --rm \
@@ -310,7 +347,7 @@ Bootstrap:
 
 ```bash
 ./build.sh dev            # builds cc-base, then cc-dev, on the host
-docker compose -f .cc-docker/docker-compose.yml run cc
+cc                         # runs this repo's own .cc-docker/docker-compose.yml
 ```
 
 This repo's own `.cc-docker/docker-compose.yml` is already wired for it
