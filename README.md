@@ -107,21 +107,30 @@ This gives `./build.sh <TAB>` completion against the live list of images. The im
 
 ```
 .
-├── .cc-docker/
-│   ├── docker-compose.yml       # Compose service definition
-│   └── .env.example             # Template for optional git identity config
-└── images/
-    ├── base/
-    │   ├── cc-wrapper.sh        # Entrypoint (root phase): matches host UID/GID, re-execs via gosu
-    │   ├── run-as-hostuser.sh   # User phase: applies git config, clears terminal, runs claude
-    │   └── Dockerfile           # Debian Bookworm slim + Claude Code CLI (cc-base)
-    ├── node20/
-    │   └── Dockerfile           # cc-base + Node.js 20 (cc-node20)
-    ├── vue3/
-    │   └── Dockerfile           # cc-node20 + Yarn via corepack (cc-vue3)
-    └── zulu21/
-        └── Dockerfile           # cc-base + Azul Zulu JDK 21 (cc-zulu21)
+├── .cc-docker-dev                # committed marker; see below
+├── .cc-docker/                   # created by init-cc per project, gitignored (personal, not committed)
+│   ├── cc-docker.yml             # native config (source of truth), or:
+│   ├── docker-compose.yml        # ...generated from it, or hand-written (raw)
+│   └── .env                      # raw only: git identity
+├── images/
+│   ├── base/
+│   │   ├── cc-wrapper.sh        # Entrypoint (root phase): matches host UID/GID, re-execs via gosu
+│   │   ├── run-as-hostuser.sh   # User phase: applies git config, clears terminal, runs claude
+│   │   └── Dockerfile           # Debian Bookworm slim + Claude Code CLI (cc-base)
+│   ├── node20/
+│   │   └── Dockerfile           # cc-base + Node.js 20 (cc-node20)
+│   ├── vue3/
+│   │   └── Dockerfile           # cc-node20 + Yarn via corepack (cc-vue3)
+│   └── zulu21/
+│       └── Dockerfile           # cc-base + Azul Zulu JDK 21 (cc-zulu21)
+└── toolchain/                    # cc-docker's own tooling images, not offered by init-cc's menu
+    ├── config/                   # cc-config: generates docker-compose.yml from cc-docker.yml
+    └── dev/                      # cc-dev: this repo's own dev environment (see below)
 ```
+
+`.cc-docker-dev` (a file at the repo root, not inside `.cc-docker/`) is a marker committed to this
+repo only — it's what lets `cc-dev` refuse to run in any other project (see
+[Why cc-dev is restricted to this repo](#why-cc-dev-is-restricted-to-this-repo)).
 
 ## Usage
 
@@ -215,31 +224,17 @@ docker run -it --rm \
 
 ## Using cc-claude in another project
 
-The quickest way is `init-cc` (see [Scripts](#scripts) above). If you prefer to do it manually, copy the whole `.cc-docker/` directory into your project root and adjust as needed:
-
-```bash
-cp -r /path/to/cc-docker/.cc-docker /your/project/
-cp /your/project/.cc-docker/.env.example /your/project/.cc-docker/.env
-# edit .cc-docker/.env with your git identity
-```
-
-The compose file:
+The quickest way is `init-cc` (see [Scripts](#scripts) above) — it prompts for image, git
+identity, and config type, and writes native config by default. If you prefer to do it manually,
+create `.cc-docker/cc-docker.yml` in your project root yourself:
 
 ```yaml
-services:
-  cc:
-    image: cc-base  # or cc-vue3 for Vue 3 projects, or any other extension of cc-base
-    stdin_open: true
-    tty: true
-    environment:
-      GIT_USER_NAME: ${GIT_USER_NAME:-}
-      GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
-      PROJECT_DIR: ${PWD}
-    working_dir: ${PWD}
-    volumes:
-      - ${PWD}:${PWD}
-      - ~/.claude:/home/hostuser/.claude
-      - ~/.claude.json:/home/hostuser/.claude.json
+image: cc-base  # or cc-vue3 for Vue 3 projects, or any other extension of cc-base
+git:
+  name: Your Name
+  email: you@example.com
+mounts:
+  - path: .
 ```
 
 Then from your project root:
@@ -249,10 +244,12 @@ Then from your project root:
 /path/to/cc-docker/build.sh
 
 # Start Claude Code in your project
-docker-compose -f .cc-docker/docker-compose.yml run cc
+cc
 ```
 
-The volume mounts are the key pieces:
+`cc` generates `.cc-docker/docker-compose.yml` from `cc-docker.yml` and runs it (see
+[Configuring cc-docker](#configuring-cc-docker-cc-dockeryml) for the full schema). The resulting
+compose file's volume mounts are the key pieces:
 
 | Mount / setting | Purpose |
 |-----------------|---------|
@@ -268,6 +265,14 @@ config, `.cc-docker/cc-docker.yml` (the *native* option, preselected). The gener
 `cc-config` (`toolchain/config/`) — a small tool that reads `cc-docker.yml` and writes
 `docker-compose.yml`. When native, don't hand-edit `docker-compose.yml` — edit `cc-docker.yml`
 instead, `cc` regenerates it for you.
+
+**Tracking:** the whole `.cc-docker/` directory is gitignored. Using cc-docker is currently
+treated as a personal choice — nothing about your setup (image, mounts, git identity, the
+generated compose file) is committed, so nothing project-specific ends up in git history. If a
+future need arises to let a project *share* a config across contributors, the clean way to do
+that is splitting `.cc-docker/` into a tracked subdir (shared config) and a gitignored one
+(per-developer overrides + the generated artifact) — not done today, but worth knowing the
+current all-gitignored setup is a deliberate starting point, not an oversight.
 
 `cc-docker.yml` fields:
 
@@ -347,11 +352,23 @@ Bootstrap:
 
 ```bash
 ./build.sh dev            # builds cc-base, then cc-dev, on the host
-cc                         # runs this repo's own .cc-docker/docker-compose.yml
 ```
 
-This repo's own `.cc-docker/docker-compose.yml` is already wired for it
-(`image: cc-dev` + a `/var/run/docker.sock:/var/run/docker.sock` mount).
+`.cc-docker/` is gitignored (see [Tracking](#configuring-cc-docker-cc-dockeryml)), so a fresh
+clone has no config yet. `init-cc`'s image menu won't offer `cc-dev` (it lives in `toolchain/`,
+not `images/`), so write `.cc-docker/cc-docker.yml` by hand instead:
+
+```yaml
+image: cc-dev
+mounts:
+  - path: .
+extra_mounts:
+  - /var/run/docker.sock:/var/run/docker.sock  # required: gives cc-dev the docker CLI/daemon access above
+```
+
+Then `cc` generates `.cc-docker/docker-compose.yml` from it and runs it. Add further personal
+`extra_mounts` entries as needed (e.g. a screenshot tool's temp dir) — they're not required for
+cc-dev itself.
 
 ### Why cc-dev is restricted to this repo
 
@@ -423,15 +440,24 @@ Claude Code permissions are configured in `.claude/settings.local.json`. Edit th
 
 ### Git identity (optional)
 
-By default, the container has no git user identity. To set one, copy `.cc-docker/.env.example` to `.cc-docker/.env` and fill in your details:
+By default, the container has no git user identity. With a native `cc-docker.yml` (`init-cc`'s
+default), set it via the `git:` block:
 
-```bash
-cp .cc-docker/.env.example .cc-docker/.env
+```yaml
+git:
+  name: Your Name
+  email: you@example.com
 ```
+
+With a raw `docker-compose.yml` (`init-cc`'s alternative choice), set it in `.cc-docker/.env`
+instead:
 
 ```ini
 GIT_USER_NAME=Your Name
 GIT_USER_EMAIL=you@example.com
 ```
 
-`.cc-docker/.env` is gitignored, so each developer maintains their own without affecting the shared config. The values are picked up by `.cc-docker/docker-compose.yml` and applied via `git config --global` at container startup.
+Either way `.cc-docker/` is gitignored (see
+[Tracking](#configuring-cc-docker-cc-dockeryml)), so this is per-developer and never committed.
+The values are applied via `git config --global` at container startup
+(`images/base/run-as-hostuser.sh`).

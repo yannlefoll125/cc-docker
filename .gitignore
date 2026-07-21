@@ -3,6 +3,6 @@
 .env
 
 
-.cc-docker/.env
+.cc-docker/
 
 .scratch-test
