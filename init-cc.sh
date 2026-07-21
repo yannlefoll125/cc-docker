@@ -162,6 +162,10 @@ cc() {
         if [[ ! -f "$compose_file" || "$config_file" -nt "$compose_file" ]]; then
             docker run --rm \
                 -e PROJECT_DIR="$dir" \
+                -e CC_HOST_WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+                -e CC_HOST_XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+                -e CC_HOST_DISPLAY="${DISPLAY:-}" \
+                -e CC_HOST_XAUTHORITY="${XAUTHORITY:-}" \
                 -v "$dir":/project:ro \
                 -v "$target_dir":/out \
                 cc-config || return 1

@@ -284,6 +284,7 @@ current all-gitignored setup is a deliberate starting point, not an oversight.
 | `readonly` | boolean | no | If true, all mounts declared in `mounts` are read-only. Defaults to `false`. |
 | `mounts` | list | no | Project paths to bind-mount. Each entry is `{path, exclude}`: `path` (required) is relative to the project root — use `"."` for the whole project; `exclude` is a list of glob patterns (relative to `path`) to shadow out with a `tmpfs` (directories) or a read-only `/dev/null` bind (files). |
 | `extra_mounts` | list | no | Raw docker compose volume entries, appended verbatim — no validation. |
+| `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
 
 Example:
 
@@ -314,6 +315,36 @@ docker run --rm \
   -v "$PWD:/project:ro" \
   cc-config
 ```
+
+### Clipboard image paste (X11/Wayland)
+
+`cc-base` ships `wl-clipboard` and `xclip`, so `claude` can paste images from the host clipboard.
+Getting the clipboard's *contents* across the container boundary needs the host's display socket
+forwarded in — a container has no access to the host's X11/Wayland session by default. `cc`
+handles this automatically: it reads `$WAYLAND_DISPLAY`/`$DISPLAY` etc. from your host shell and
+forwards them to `cc-config`, which wires up the right mount and env vars for you. Nothing to
+configure — `display: auto` is the default.
+
+To see what it detected, check the generated `.cc-docker/docker-compose.yml` for a
+`WAYLAND_DISPLAY`/`DISPLAY` entry under `environment`. If neither your host's Wayland nor X11
+session is set (e.g. a headless box, or you ran `cc-config` by hand without going through `cc`),
+generation prints a warning and skips forwarding — pasting just won't work, nothing else is
+affected.
+
+Override with the `display` field in `cc-docker.yml` if needed:
+
+```yaml
+display: disabled  # disable forwarding entirely
+# display: wayland # force Wayland instead of auto-detecting
+# display: x11     # force X11 instead of auto-detecting
+```
+
+(Not `off`: YAML parses a bare `off` as the boolean `false`, which would fail schema
+validation — `disabled` sidesteps that footgun.)
+
+Drag-and-drop of files into the terminal isn't fixed by this: the terminal emulator inserts the
+dropped file's absolute *host* path as text, and that path only resolves inside the container if
+it happens to fall under one of the configured mounts.
 
 ### IntelliJ: schema-validated editing
 

@@ -37,6 +37,12 @@
       "description": "If true, all project bind mounts declared in `mounts` are mounted read-only.",
       "default": false
     },
+    "display": {
+      "type": "string",
+      "description": "Forward the host's display-server clipboard socket into the container, so `claude` can paste images from the host clipboard. 'auto' detects Wayland vs X11 from the host env vars the `cc` launcher forwards (CC_HOST_WAYLAND_DISPLAY/CC_HOST_DISPLAY) and does nothing if neither is set. 'wayland'/'x11' force a mode. 'disabled' turns off forwarding. (Not 'off': YAML 1.1 parses a bare 'off' as the boolean false.)",
+      "enum": ["auto", "wayland", "x11", "disabled"],
+      "default": "auto"
+    },
     "mounts": {
       "type": "array",
       "description": "Project paths to bind-mount into the container.",

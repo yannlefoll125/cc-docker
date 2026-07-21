@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     gosu \
     make \
+    wl-clipboard \
+    xclip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://claude.ai/install.sh | bash

@@ -122,6 +122,44 @@ def build_mount_volumes(mounts_cfg, project_dir, readonly):
     return volumes, root_covered
 
 
+def apply_display(config, environment, volumes):
+    """Forward the host's clipboard display socket into the container, so
+    `claude` can paste images from the host clipboard. The `cc` launcher runs
+    with a real host shell environment and forwards a snapshot of it here as
+    CC_HOST_* — this container (cc-config) has no other way to see it. Those
+    CC_HOST_* vars are only used to *detect* which display server is active;
+    the values written into the compose file are ${VAR}-style references so
+    `docker compose run` resolves them fresh from the host shell's own
+    environment every time, instead of baking in a value that could go stale.
+    """
+    mode = config.get("display", "auto")
+    if mode == "disabled":
+        return
+
+    if mode == "auto":
+        if os.environ.get("CC_HOST_WAYLAND_DISPLAY"):
+            mode = "wayland"
+        elif os.environ.get("CC_HOST_DISPLAY"):
+            mode = "x11"
+        else:
+            warn(
+                "display: auto found no host display server (run via the `cc` "
+                "launcher, not cc-config directly, for auto-detection) — "
+                "skipping clipboard forwarding"
+            )
+            return
+
+    if mode == "wayland":
+        environment.setdefault("WAYLAND_DISPLAY", "${WAYLAND_DISPLAY}")
+        environment.setdefault("XDG_RUNTIME_DIR", "${XDG_RUNTIME_DIR}")
+        volumes.append("${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}")
+    elif mode == "x11":
+        environment.setdefault("DISPLAY", "${DISPLAY}")
+        environment.setdefault("XAUTHORITY", "/home/hostuser/.Xauthority")
+        volumes.append("/tmp/.X11-unix:/tmp/.X11-unix")
+        volumes.append("${XAUTHORITY}:/home/hostuser/.Xauthority:ro")
+
+
 def main():
     project_dir = os.environ.get("PROJECT_DIR")
     if not project_dir:
@@ -170,6 +208,8 @@ def main():
     environment["PROJECT_DIR"] = project_dir
     environment.update(env_cfg)
 
+    apply_display(config, environment, volumes)
+
     compose = {
         "services": {
             "cc": {
@@ -180,6 +220,10 @@ def main():
                 "working_dir": project_dir,
                 "environment": environment,
                 "volumes": volumes,
+                # The entrypoint chain never traps or forwards SIGTERM to `claude`,
+                # so `docker stop`/`compose down` always ends in a SIGKILL anyway —
+                # a nonzero grace period would just be dead waiting time.
+                "stop_grace_period": "0s",
             }
         }
     }
