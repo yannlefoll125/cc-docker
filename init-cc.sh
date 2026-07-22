@@ -1,4 +1,14 @@
 init-cc() {
+    # Self-refresh: pick up edits/updates to init-cc.sh without a manual re-source.
+    # Re-source then re-exec so THIS invocation runs the latest on-disk version; the
+    # guard var (set only for the re-exec) prevents infinite recursion.
+    if [[ -z "${_CC_REEXEC:-}" && -n "${CC_DOCKER_DIR:-}" && -f "$CC_DOCKER_DIR/init-cc.sh" ]]; then
+        source "$CC_DOCKER_DIR/init-cc.sh" || return 1
+        _CC_REEXEC=1 init-cc "$@"
+        return $?
+    fi
+    unset _CC_REEXEC
+
     if [[ -z "${CC_DOCKER_DIR:-}" ]]; then
         echo "Error: CC_DOCKER_DIR is not set." >&2
         echo "Add to your .bashrc:" >&2
@@ -144,6 +154,16 @@ EOF
 # .cc-docker/. Backward compatible: a project with only a hand-written
 # docker-compose.yml (no cc-docker.yml) runs directly, no regeneration.
 cc() {
+    # Self-refresh: pick up edits/updates to init-cc.sh without a manual re-source.
+    # Re-source then re-exec so THIS invocation runs the latest on-disk version; the
+    # guard var (set only for the re-exec) prevents infinite recursion.
+    if [[ -z "${_CC_REEXEC:-}" && -n "${CC_DOCKER_DIR:-}" && -f "$CC_DOCKER_DIR/init-cc.sh" ]]; then
+        source "$CC_DOCKER_DIR/init-cc.sh" || return 1
+        _CC_REEXEC=1 cc "$@"
+        return $?
+    fi
+    unset _CC_REEXEC
+
     local dir="$PWD"
     while [[ ! -d "$dir/.cc-docker" && "$dir" != "/" ]]; do
         dir="$(dirname "$dir")"
