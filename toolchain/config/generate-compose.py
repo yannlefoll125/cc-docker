@@ -186,6 +186,19 @@ def main():
             "target": "/home/hostuser/.claude.json",
         }
     )
+
+    # Redirect the project-level .claude/ execution context into the gitignored
+    # .cc-docker/.claude/ (scaffolded by the `cc` launcher). This overlays
+    # $PROJECT_DIR/.claude, so Claude's project-level writes (settings.local.json,
+    # plans/, todos) never land in the committed/shared project tree.
+    volumes.append(
+        {
+            "type": "bind",
+            "source": str(Path(project_dir) / ".cc-docker" / ".claude"),
+            "target": str(Path(project_dir) / ".claude"),
+            "read_only": False,
+        }
+    )
     if not root_covered:
         cc_docker_yml_path = str(Path(project_dir) / ".cc-docker" / "cc-docker.yml")
         volumes.append(
@@ -229,6 +242,15 @@ def main():
     }
 
     OUTPUT_PATH.write_text(HEADER + yaml.dump(compose, sort_keys=False, default_flow_style=False))
+
+    # cc-config runs as root, so the file it writes is root-owned on the host.
+    # Chown it back to the invoking host user (the `cc` launcher passes their
+    # ids as HOST_UID/HOST_GID) so it stays editable without sudo.
+    host_uid = os.environ.get("HOST_UID")
+    host_gid = os.environ.get("HOST_GID")
+    if host_uid and host_gid:
+        os.chown(OUTPUT_PATH, int(host_uid), int(host_gid))
+
     print(f"wrote {OUTPUT_PATH}")
 
 

@@ -159,17 +159,32 @@ cc() {
     local compose_file="$target_dir/docker-compose.yml"
 
     if [[ -f "$config_file" ]]; then
-        if [[ ! -f "$compose_file" || "$config_file" -nt "$compose_file" ]]; then
-            docker run --rm \
-                -e PROJECT_DIR="$dir" \
-                -e CC_HOST_WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
-                -e CC_HOST_XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
-                -e CC_HOST_DISPLAY="${DISPLAY:-}" \
-                -e CC_HOST_XAUTHORITY="${XAUTHORITY:-}" \
-                -v "$dir":/project:ro \
-                -v "$target_dir":/out \
-                cc-config || return 1
+        # Project-local .claude execution context: redirected into the gitignored
+        # .cc-docker/.claude/ (via a bind mount added by cc-config) so nothing
+        # Claude writes at the project level (settings.local.json, plans/, todos)
+        # ends up in the committed/shared project tree.
+        local claude_dir="$target_dir/.claude"
+        if [[ ! -d "$claude_dir" ]]; then
+            mkdir -p "$claude_dir"
+            printf '{}\n' > "$claude_dir/settings.json"
         fi
+
+        local gitignore_path="$dir/.gitignore"
+        if ! grep -qxF '.claude/' "$gitignore_path" 2>/dev/null; then
+            echo '.claude/' >> "$gitignore_path"
+        fi
+
+        docker run --rm \
+            -e PROJECT_DIR="$dir" \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e CC_HOST_WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+            -e CC_HOST_XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+            -e CC_HOST_DISPLAY="${DISPLAY:-}" \
+            -e CC_HOST_XAUTHORITY="${XAUTHORITY:-}" \
+            -v "$dir":/project:ro \
+            -v "$target_dir":/out \
+            cc-config || return 1
     elif [[ ! -f "$compose_file" ]]; then
         echo "Error: no cc-docker.yml or docker-compose.yml found in $target_dir." >&2
         echo "Run init-cc to set one up." >&2

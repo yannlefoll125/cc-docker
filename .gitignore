@@ -6,3 +6,4 @@
 .cc-docker/
 
 .scratch-test
+toolchain/config/__pycache__/

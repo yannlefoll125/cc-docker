@@ -85,7 +85,8 @@ Defined by `init-cc.sh` alongside `init-cc`. On each invocation it:
 1. Walks up from the current directory to find `.cc-docker/`, so it works from any subdirectory
    of the project.
 2. If `.cc-docker/cc-docker.yml` exists, regenerates `.cc-docker/docker-compose.yml` from it via
-   the `cc-config` image (skipped if `docker-compose.yml` is already newer than `cc-docker.yml`).
+   the `cc-config` image, every time — generation only takes a few ms, so there's no staleness
+   check to get wrong.
 3. Otherwise, if a hand-written `.cc-docker/docker-compose.yml` exists, uses it directly — no
    regeneration. This is what keeps existing raw-compose projects working unchanged.
 4. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
@@ -256,6 +257,7 @@ compose file's volume mounts are the key pieces:
 | `${PWD}:${PWD}` + `working_dir` + `PROJECT_DIR` | Mounts your project at its host path inside the container. Using the same path on both sides means Claude Code's per-project state bucket (keyed by cwd) is unique per project on the host — sessions from different repos stay separate in `~/.claude/projects/`. Also the source of the host UID/GID used to create `hostuser`. |
 | `~/.claude:/home/hostuser/.claude` | Persists Claude credentials and settings; mounted at the `hostuser` home path so ownership matches your host login |
 | `~/.claude.json:/home/hostuser/.claude.json` | Persists Claude's top-level auth/config state; same ownership rationale |
+| `.cc-docker/.claude:$PROJECT_DIR/.claude` | Overlays the project-level Claude context (settings, plans, todos) into the gitignored `.cc-docker/.claude/`, so Claude's project-level writes never land in the committed/shared project tree. Scaffolded by `cc` on first run (`.cc-docker/.claude/settings.json`), and `cc` also adds `.claude/` to your project's `.gitignore` so the overlay doesn't show up as untracked inside the container. |
 
 ## Configuring cc-docker (`cc-docker.yml`)
 
