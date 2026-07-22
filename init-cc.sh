@@ -160,15 +160,10 @@ cc() {
 
     if [[ -f "$config_file" ]]; then
         # Project-local .claude execution context: redirected into the gitignored
-        # .cc-docker/.claude/ (via a bind mount added by cc-config) so nothing
-        # Claude writes at the project level (settings.local.json, plans/, todos)
-        # ends up in the committed/shared project tree.
-        local claude_dir="$target_dir/.claude"
-        if [[ ! -d "$claude_dir" ]]; then
-            mkdir -p "$claude_dir"
-            printf '{}\n' > "$claude_dir/settings.json"
-        fi
-
+        # .cc-docker/.claude/ (created by cc-config itself, alongside the bind
+        # mount it adds) so nothing Claude writes at the project level
+        # (settings.local.json, plans/, todos) ends up in the committed/shared
+        # project tree.
         local gitignore_path="$dir/.gitignore"
         if ! grep -qxF '.claude/' "$gitignore_path" 2>/dev/null; then
             echo '.claude/' >> "$gitignore_path"

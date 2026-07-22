@@ -14,6 +14,9 @@ import yaml
 CONTAINER_PROJECT_ROOT = Path("/project")
 CONFIG_PATH = Path("/out/cc-docker.yml")
 OUTPUT_PATH = Path("/out/docker-compose.yml")
+# Container-side view of the host's $PROJECT_DIR/.cc-docker/.claude bind source
+# (see the overlay mount below) — /out is that project's .cc-docker/, mounted r/w.
+OVERLAY_DIR = Path("/out/.claude")
 # Resolved relative to this script so it works both inside the cc-config image
 # (script + schema both copied to /) and when run directly from the repo
 # checkout (script + schema both live in toolchain/config/).
@@ -188,9 +191,13 @@ def main():
     )
 
     # Redirect the project-level .claude/ execution context into the gitignored
-    # .cc-docker/.claude/ (scaffolded by the `cc` launcher). This overlays
-    # $PROJECT_DIR/.claude, so Claude's project-level writes (settings.local.json,
-    # plans/, todos) never land in the committed/shared project tree.
+    # .cc-docker/.claude/ (scaffolded here). This overlays $PROJECT_DIR/.claude,
+    # so Claude's project-level writes (settings.local.json, plans/, todos) never
+    # land in the committed/shared project tree.
+    OVERLAY_DIR.mkdir(parents=True, exist_ok=True)
+    overlay_settings = OVERLAY_DIR / "settings.json"
+    if not overlay_settings.exists():
+        overlay_settings.write_text("{}\n")
     volumes.append(
         {
             "type": "bind",
@@ -243,13 +250,17 @@ def main():
 
     OUTPUT_PATH.write_text(HEADER + yaml.dump(compose, sort_keys=False, default_flow_style=False))
 
-    # cc-config runs as root, so the file it writes is root-owned on the host.
-    # Chown it back to the invoking host user (the `cc` launcher passes their
-    # ids as HOST_UID/HOST_GID) so it stays editable without sudo.
+    # cc-config runs as root, so anything it writes under /out is root-owned on
+    # the host. Chown it all back to the invoking host user (the `cc` launcher
+    # passes their ids as HOST_UID/HOST_GID) so it stays editable without sudo.
     host_uid = os.environ.get("HOST_UID")
     host_gid = os.environ.get("HOST_GID")
     if host_uid and host_gid:
-        os.chown(OUTPUT_PATH, int(host_uid), int(host_gid))
+        uid, gid = int(host_uid), int(host_gid)
+        os.chown(OUTPUT_PATH, uid, gid)
+        os.chown(OVERLAY_DIR, uid, gid)
+        if overlay_settings.exists():
+            os.chown(overlay_settings, uid, gid)
 
     print(f"wrote {OUTPUT_PATH}")
 
