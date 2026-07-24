@@ -215,6 +215,38 @@ cc() {
             -v "$dir":/project:ro \
             -v "$target_dir":/out \
             cc-config || return 1
+
+        # Modular mode: cc-config wrote .cc-docker/assembled.tag (+ assembled.modules).
+        # Assemble the per-project Dockerfile, build its blocks, then the final image.
+        # Legacy `image:` configs leave no assembled.tag, so this whole block is skipped.
+        if [[ -f "$target_dir/assembled.tag" ]]; then
+            local tag; tag="$(cat "$target_dir/assembled.tag")"
+            local modules=(); mapfile -t modules < "$target_dir/assembled.modules"
+
+            # Ensure the assembler image exists (normally pre-built by build.sh).
+            docker image inspect cc-assemble >/dev/null 2>&1 \
+                || docker build -t cc-assemble "$CC_DOCKER_DIR/toolchain/assemble" >/dev/null \
+                || return 1
+
+            # Generate assembled.Dockerfile from modules: + each module.yml.
+            docker run --rm \
+                -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+                -v "$target_dir":/out \
+                -v "$CC_DOCKER_DIR/stack":/stack:ro \
+                cc-assemble || return 1
+
+            # Build base + this project's stacks (scoped; always build, cache decides).
+            "$CC_DOCKER_DIR/build.sh" base "${modules[@]}" || return 1
+
+            # Build the assembled final under a per-tag flock in a shared, user-writable
+            # location (the final is global per module set → the lock is cross-project).
+            local lock_dir="${XDG_RUNTIME_DIR:-/tmp}/cc-docker/locks"
+            mkdir -p "$lock_dir"
+            local lock_file="$lock_dir/$(printf '%s' "$tag" | tr '/:' '__').lock"
+            ( flock 9 || exit 1
+              docker build -f "$target_dir/assembled.Dockerfile" -t "$tag" "$CC_DOCKER_DIR/bootstrap"
+            ) 9>"$lock_file" || return 1
+        fi
     elif [[ ! -f "$compose_file" ]]; then
         echo "Error: no cc-docker.yml or docker-compose.yml found in $target_dir." >&2
         echo "Run init-cc to set one up." >&2

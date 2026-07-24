@@ -255,5 +255,8 @@ _(update as phases land)_
       correct assembled.Dockerfile; legacy path intact)
 - [x] P4 — `build.sh` (2026-07-24; scoped `build.sh base node zulu` tags
       stack/node:20 + stack/zulu:21, unknown module errors, discovers toolchain+stacks)
-- [ ] P5 — Launcher wiring
+- [x] P5 — Launcher wiring (2026-07-24; modular pipeline cc-config→cc-assemble→
+      build.sh→flocked final build verified, cc/node-zulu final has node/java/claude
+      + baked scripts + ENTRYPOINT; legacy path guarded. Manual check pending: the
+      interactive `docker compose run cc` attach — same mechanism as legacy.)
 - [ ] P6 — Acceptance
