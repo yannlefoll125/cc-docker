@@ -253,6 +253,7 @@ _(update as phases land)_
 - [x] P3 — Schemas + generators (2026-07-24; oneOf validates, cc-config writes
       tag/modules sidecars in modular mode + clears them in legacy, cc-assemble emits
       correct assembled.Dockerfile; legacy path intact)
-- [ ] P4 — `build.sh`
+- [x] P4 — `build.sh` (2026-07-24; scoped `build.sh base node zulu` tags
+      stack/node:20 + stack/zulu:21, unknown module errors, discovers toolchain+stacks)
 - [ ] P5 — Launcher wiring
 - [ ] P6 — Acceptance
