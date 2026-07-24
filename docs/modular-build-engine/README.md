@@ -1,8 +1,10 @@
 # Modular build engine — exploration
 
-> **Status:** POC design settled — not yet implemented. Four code-grounded review
-> passes (`review.md` … `review_4.md`) have been fully incorporated. Remaining
-> `_(open, deferred)_` items are explicitly post-POC. This is a living doc.
+> **Status:** POC **implemented** (branch `modular-build-engine`, phases P0–P6 in
+> [`roadmap.md`](roadmap.md)) after four code-grounded review passes (`review.md` …
+> `review_4.md`). Acceptance demos pass, including the headline: editing a bootstrap
+> script rebuilds only the bootstrap layer (toolchains stay cached) — the cascade is
+> gone. Remaining `_(open, deferred)_` items are explicitly post-POC. Living doc.
 >
 > **Implementation plan:** see [`roadmap.md`](roadmap.md) — phased, dependency-ordered
 > tasks with verification steps. This doc holds the design + rationale; the roadmap

@@ -259,4 +259,6 @@ _(update as phases land)_
       build.sh→flocked final build verified, cc/node-zulu final has node/java/claude
       + baked scripts + ENTRYPOINT; legacy path guarded. Manual check pending: the
       interactive `docker compose run cc` attach — same mechanism as legacy.)
-- [ ] P6 — Acceptance
+- [x] P6 — Acceptance (2026-07-24; all four demos pass — cascade killed (bootstrap
+      edit → toolchain layers CACHED, only bootstrap rebuilds), isolation, sharing
+      (same modules → same image id), no stale reuse)
