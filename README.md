@@ -287,6 +287,7 @@ current all-gitignored setup is a deliberate starting point, not an oversight.
 | `mounts` | list | no | Project paths to bind-mount. Each entry is `{path, exclude}`: `path` (required) is relative to the project root — use `"."` for the whole project; `exclude` is a list of glob patterns (relative to `path`) to shadow out with a `tmpfs` (directories) or a read-only `/dev/null` bind (files). |
 | `extra_mounts` | list | no | Raw docker compose volume entries, appended verbatim — no validation. |
 | `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
+| `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to keep using the mounted `~/.claude` OAuth login. See [API key auth](#api-key-auth-optional). |
 
 Example:
 
@@ -347,6 +348,35 @@ validation — `disabled` sidesteps that footgun.)
 Drag-and-drop of files into the terminal isn't fixed by this: the terminal emulator inserts the
 dropped file's absolute *host* path as text, and that path only resolves inside the container if
 it happens to fall under one of the configured mounts.
+
+### API key auth (optional)
+
+By default, `claude` inside the container authenticates the same way it does on the host: via
+the OAuth login state in the mounted `~/.claude` / `~/.claude.json` (see
+[The `hostuser` model](#the-hostuser-model)). If you'd rather use a raw Anthropic API key instead
+— e.g. for a CI-like box with no interactive login, or a key scoped separately from your personal
+account — set `anthropic_api_key_file` in `cc-docker.yml` to a host file containing just the key:
+
+```yaml
+anthropic_api_key_file: ~/.config/cc-docker/anthropic_api_key
+```
+
+```bash
+mkdir -p ~/.config/cc-docker
+printf '%s' 'sk-ant-...' > ~/.config/cc-docker/anthropic_api_key
+chmod 600 ~/.config/cc-docker/anthropic_api_key
+```
+
+The key is delivered as a real [Docker secret](https://docs.docker.com/compose/how-tos/use-secrets/)
+— a file mounted at `/run/secrets/anthropic_api_key` — rather than an environment variable, so it
+never appears in the generated `docker-compose.yml`, in `docker inspect`, or in the container's
+environment. `run-as-hostuser.sh` reads the file and exports it as `ANTHROPIC_API_KEY` right
+before launching `claude`.
+
+This field is optional and off by default: omit it and nothing changes — auth keeps working
+exactly as it does today, off the mounted `~/.claude` state. When set, it takes precedence for
+that run; `claude` records the one-time key approval in `~/.claude.json`, so later runs (with or
+without the key) won't need to re-approve it.
 
 ### IntelliJ: schema-validated editing
 

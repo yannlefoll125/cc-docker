@@ -125,6 +125,25 @@ def build_mount_volumes(mounts_cfg, project_dir, readonly):
     return volumes, root_covered
 
 
+def resolve_api_key_file(path):
+    """Resolve `anthropic_api_key_file` to an absolute host path. A leading ~ or
+    ~/ is expanded against CC_HOST_HOME — the `cc` launcher's own home, forwarded
+    in because this container has no other way to see it (same pattern as the
+    CC_HOST_* display vars). Emitting an absolute path here avoids depending on
+    docker compose's own (unverified) ~-expansion for `secrets.*.file`.
+    """
+    if path == "~" or path.startswith("~/"):
+        host_home = os.environ.get("CC_HOST_HOME")
+        if not host_home:
+            die(
+                "anthropic_api_key_file uses '~' but CC_HOST_HOME is not set — "
+                "run via the `cc` launcher, not cc-config directly, or use an "
+                "absolute path instead"
+            )
+        path = host_home + path[1:]
+    return os.path.normpath(path)
+
+
 def apply_display(config, environment, volumes):
     """Forward the host's clipboard display socket into the container, so
     `claude` can paste images from the host clipboard. The `cc` launcher runs
@@ -176,6 +195,9 @@ def main():
     readonly = config.get("readonly", False)
     mounts_cfg = config.get("mounts", [])
     extra_mounts_cfg = config.get("extra_mounts", [])
+    api_key_file = config.get("anthropic_api_key_file")
+    if api_key_file:
+        api_key_file = resolve_api_key_file(api_key_file)
 
     volumes, root_covered = build_mount_volumes(mounts_cfg, project_dir, readonly)
 
@@ -230,23 +252,29 @@ def main():
 
     apply_display(config, environment, volumes)
 
-    compose = {
-        "services": {
-            "cc": {
-                "image": image,
-                "hostname": "cc",
-                "stdin_open": True,
-                "tty": True,
-                "working_dir": project_dir,
-                "environment": environment,
-                "volumes": volumes,
-                # The entrypoint chain never traps or forwards SIGTERM to `claude`,
-                # so `docker stop`/`compose down` always ends in a SIGKILL anyway —
-                # a nonzero grace period would just be dead waiting time.
-                "stop_grace_period": "0s",
-            }
-        }
+    service = {
+        "image": image,
+        "hostname": "cc",
+        "stdin_open": True,
+        "tty": True,
+        "working_dir": project_dir,
+        "environment": environment,
+        "volumes": volumes,
+        # The entrypoint chain never traps or forwards SIGTERM to `claude`,
+        # so `docker stop`/`compose down` always ends in a SIGKILL anyway —
+        # a nonzero grace period would just be dead waiting time.
+        "stop_grace_period": "0s",
     }
+    if api_key_file:
+        # Delivered as a real Docker secret (a file under /run/secrets/, not an
+        # env var) so the key never appears in `docker inspect`, this compose
+        # file, or the container environment. run-as-hostuser.sh reads the file
+        # and exports ANTHROPIC_API_KEY right before launching claude.
+        service["secrets"] = ["anthropic_api_key"]
+
+    compose = {"services": {"cc": service}}
+    if api_key_file:
+        compose["secrets"] = {"anthropic_api_key": {"file": api_key_file}}
 
     OUTPUT_PATH.write_text(HEADER + yaml.dump(compose, sort_keys=False, default_flow_style=False))
 

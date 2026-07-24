@@ -189,6 +189,20 @@ cc() {
             echo '.claude/' >> "$gitignore_path"
         fi
 
+        # Best-effort sanity check: cc-config runs in its own container and can't
+        # see the host filesystem outside $dir/$target_dir, so a typo'd
+        # anthropic_api_key_file path would otherwise fail silently deep inside
+        # `docker compose run` (a missing `secrets.*.file` source). Check it here,
+        # in the host shell, where ~ and relative paths resolve normally.
+        local key_file
+        key_file="$(grep -E '^anthropic_api_key_file:' "$config_file" 2>/dev/null | sed -E "s/^anthropic_api_key_file:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+        if [[ -n "$key_file" ]]; then
+            local expanded_key_file="${key_file/#\~/$HOME}"
+            if [[ ! -f "$expanded_key_file" ]]; then
+                echo "warning: anthropic_api_key_file '$key_file' not found on host — API key auth will fail" >&2
+            fi
+        fi
+
         docker run --rm \
             -e PROJECT_DIR="$dir" \
             -e HOST_UID="$(id -u)" \
@@ -197,6 +211,7 @@ cc() {
             -e CC_HOST_XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
             -e CC_HOST_DISPLAY="${DISPLAY:-}" \
             -e CC_HOST_XAUTHORITY="${XAUTHORITY:-}" \
+            -e CC_HOST_HOME="$HOME" \
             -v "$dir":/project:ro \
             -v "$target_dir":/out \
             cc-config || return 1
