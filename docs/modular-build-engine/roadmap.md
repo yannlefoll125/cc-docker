@@ -243,7 +243,7 @@ _(update as phases land)_
 
 - [x] P0 — Migration scaffold (2026-07-24; legacy build verified: `cc-zulu21` builds
       from `legacy/images/`. Not committed yet.)
-- [ ] P1 — `base`
+- [x] P1 — `base` (2026-07-24; builds, tools present, no ENTRYPOINT, glibc 2.36, claude runs)
 - [ ] P2 — `stack/node`, `stack/zulu`
 - [ ] P3 — Schemas + generators
 - [ ] P4 — `build.sh`
