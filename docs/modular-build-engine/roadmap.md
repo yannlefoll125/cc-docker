@@ -250,7 +250,9 @@ _(update as phases land)_
 - [x] P1 — `base` (2026-07-24; builds, tools present, no ENTRYPOINT, glibc 2.36, claude runs)
 - [x] P2 — `stack/node`, `stack/zulu` (2026-07-24; node v20.20.2/yarn 4.17.1, zulu
       21.0.12, corepack writable by uid 1000, relocatable via COPY --from)
-- [ ] P3 — Schemas + generators
+- [x] P3 — Schemas + generators (2026-07-24; oneOf validates, cc-config writes
+      tag/modules sidecars in modular mode + clears them in legacy, cc-assemble emits
+      correct assembled.Dockerfile; legacy path intact)
 - [ ] P4 — `build.sh`
 - [ ] P5 — Launcher wiring
 - [ ] P6 — Acceptance

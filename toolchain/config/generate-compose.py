@@ -14,6 +14,11 @@ import yaml
 CONTAINER_PROJECT_ROOT = Path("/project")
 CONFIG_PATH = Path("/out/cc-docker.yml")
 OUTPUT_PATH = Path("/out/docker-compose.yml")
+# Sidecars for the host launcher (modular mode): the assembled image tag and the raw
+# module-name list. Presence of assembled.tag is how the launcher detects modular vs
+# legacy mode, so legacy runs clear them.
+TAG_SIDECAR = Path("/out/assembled.tag")
+MODULES_SIDECAR = Path("/out/assembled.modules")
 # Container-side view of the host's $PROJECT_DIR/.cc-docker/.claude bind source
 # (see the overlay mount below) — /out is that project's .cc-docker/, mounted r/w.
 OVERLAY_DIR = Path("/out/.claude")
@@ -189,7 +194,14 @@ def main():
     project_dir = os.path.normpath(project_dir)
 
     config = load_config()
-    image = config["image"]
+    modules = config.get("modules")
+    if modules is not None:
+        # Modular mode: the image is the deterministic assembled tag. cc-config is the
+        # SOLE tag computer — Python sorted() is the canonical sort; the launcher reads
+        # the tag back from the sidecar and never recomputes it.
+        image = "cc/" + ("-".join(sorted(modules)) if modules else "base")
+    else:
+        image = config["image"]
     git_cfg = config.get("git", {})
     env_cfg = config.get("env", {})
     readonly = config.get("readonly", False)
@@ -289,6 +301,19 @@ def main():
         os.chown(OVERLAY_DIR, uid, gid)
         if overlay_settings.exists():
             os.chown(overlay_settings, uid, gid)
+
+    # Launcher sidecars. In modular mode write the tag + module-name list (so the host
+    # never re-parses cc-docker.yml or recomputes the tag); in legacy mode clear any
+    # stale sidecars so "assembled.tag present → modular" stays a correct mode check.
+    if modules is not None:
+        TAG_SIDECAR.write_text(image + "\n")
+        MODULES_SIDECAR.write_text("".join(m + "\n" for m in sorted(modules)))
+        if host_uid and host_gid:
+            os.chown(TAG_SIDECAR, uid, gid)
+            os.chown(MODULES_SIDECAR, uid, gid)
+    else:
+        TAG_SIDECAR.unlink(missing_ok=True)
+        MODULES_SIDECAR.unlink(missing_ok=True)
 
     print(f"wrote {OUTPUT_PATH}")
 

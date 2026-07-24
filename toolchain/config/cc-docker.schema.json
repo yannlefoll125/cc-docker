@@ -4,11 +4,19 @@
   "description": "Schema for .cc-docker/cc-docker.yml — consumed by the cc-config tool (toolchain/config/generate-compose.py) to generate .cc-docker/docker-compose.yml. See the README section 'Configuring cc-docker' for details.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image"],
+  "oneOf": [
+    { "required": ["image"] },
+    { "required": ["modules"] }
+  ],
   "properties": {
     "image": {
       "type": "string",
-      "description": "Docker image to run as the `cc` service, e.g. cc-node20."
+      "description": "Legacy mode: prebuilt Docker image to run as the `cc` service, e.g. cc-node20. Mutually exclusive with `modules` — exactly one of the two is required."
+    },
+    "modules": {
+      "type": "array",
+      "description": "Modular mode: toolchain stack modules to compose into the image, e.g. [node, zulu]. An empty list [] means base only. Mutually exclusive with `image` — exactly one of the two is required.",
+      "items": { "type": "string" }
     },
     "git": {
       "type": "object",
