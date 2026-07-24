@@ -1,5 +1,4 @@
-# Modular cc-docker Makefile. See docs/modular-build-engine/roadmap.md.
-# The pre-modular Makefile is frozen at legacy/Makefile.
+
 build:
 	./build.sh
 
