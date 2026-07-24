@@ -130,6 +130,10 @@ YAML parsing stays in containers.
   `COPY --from=stack/<name>:<version>` per module, a single merged `ENV PATH`
   (sorted, deduped) + one `ENV k=v` per non-PATH var, then `COPY` bootstrap scripts,
   then `ENTRYPOINT`.
+- _(P2 finding)_ `ENV PATH` covers `docker run`/`exec` and `claude` (non-login), but
+  a login shell resets `PATH` via `/etc/profile`. Minor, but consider having
+  cc-assemble also emit `/etc/profile.d/cc-stacks.sh` exporting the same PATH so
+  interactive `bash -l` sessions see `/usr/local/*/bin`. Not needed for the cc flow.
 
 **Verify.**
 - Schema: `image` + `modules` together → validation error; neither → error;
@@ -244,7 +248,8 @@ _(update as phases land)_
 - [x] P0 — Migration scaffold (2026-07-24; legacy build verified: `cc-zulu21` builds
       from `legacy/images/`. Not committed yet.)
 - [x] P1 — `base` (2026-07-24; builds, tools present, no ENTRYPOINT, glibc 2.36, claude runs)
-- [ ] P2 — `stack/node`, `stack/zulu`
+- [x] P2 — `stack/node`, `stack/zulu` (2026-07-24; node v20.20.2/yarn 4.17.1, zulu
+      21.0.12, corepack writable by uid 1000, relocatable via COPY --from)
 - [ ] P3 — Schemas + generators
 - [ ] P4 — `build.sh`
 - [ ] P5 — Launcher wiring

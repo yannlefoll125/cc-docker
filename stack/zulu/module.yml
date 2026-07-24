@@ -1,0 +1,20 @@
+name: zulu
+version: "21"
+description: Azul Zulu JDK 21 (relocatable tarball; replaces the apt-repo install)
+
+# EXTRA apt beyond what `base` provides, for the staging build only. Empty: base
+# already ships curl + tar + gzip.
+build_deps: []
+
+# apt the copied JDK needs at runtime. Empty: headless java/javac need nothing
+# extra. (AWT/font rendering would add fontconfig.)
+runtime_deps: []
+
+# Directories the assembler COPY --from's into the final image.
+artifacts:
+  - /usr/local/zulu
+
+# Env re-declared in the final image after the COPY. PATH is prepend-form for merge.
+env:
+  JAVA_HOME: /usr/local/zulu
+  PATH: "/usr/local/zulu/bin:${PATH}"

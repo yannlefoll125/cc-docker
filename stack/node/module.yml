@@ -1,0 +1,22 @@
+name: node
+version: "20"
+description: Node.js (relocatable tarball) with corepack (yarn/pnpm) enabled
+
+# EXTRA apt beyond what `base` provides, needed only to build the artifact in the
+# staging image (discarded after COPY). Empty: base already ships curl + tar + gzip.
+build_deps: []
+
+# apt the copied artifact needs at runtime in the final image. Empty: prebuilt node
+# runs on base's glibc alone. (node-gyp native addons would add build-essential.)
+runtime_deps: []
+
+# Directories the assembler COPY --from's into the final image.
+artifacts:
+  - /usr/local/node
+
+# Env re-declared in the final image after the COPY (ENV is not inherited across
+# COPY --from). PATH is prepend-form so the assembler can merge it; COREPACK_HOME
+# lives inside the copied dir so yarn/pnpm shims travel with it.
+env:
+  PATH: "/usr/local/node/bin:${PATH}"
+  COREPACK_HOME: /usr/local/node/corepack
