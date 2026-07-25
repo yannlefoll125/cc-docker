@@ -64,13 +64,20 @@ source "$CC_DOCKER_DIR/init-cc.sh"
 Sourcing this file defines two shell functions: `init-cc` (interactive setup — see note below) and
 `cc` (the launcher, see [`cc` (the launcher)](#cc-the-launcher)).
 
-> **Note:** `init-cc`'s interactive menu is currently keyed to the pre-modular
-> `images/` layout and is being reworked for module selection (see
-> [`docs/modular-build-engine/`](docs/modular-build-engine/), deferred item). For now,
-> set up a modular project by **hand-writing** `.cc-docker/cc-docker.yml` with a
-> `modules:` list — see [Setting up a project](#setting-up-a-project) and
-> [Configuring cc-docker](#configuring-cc-docker-cc-dockeryml). Sourcing `init-cc.sh`
-> is still how you get the `cc` launcher function.
+Then, from any project directory, run `init-cc`. It prompts for:
+
+- **Project root** (defaults to the current directory)
+- **Modules** — space-separated stack module names (see `make stacks` for the list);
+  blank for just `base`. Unknown names are rejected.
+- **Git user name and email** (defaults to your global `git config` values)
+- **Whether to add `.cc-docker/` to `.gitignore`**
+
+It writes `.cc-docker/cc-docker.yml` with your `modules:` list; the `cc` launcher
+assembles and builds the image on demand. For a legacy prebuilt image (e.g. `cc-dev`)
+or a hand-written raw `docker-compose.yml`, write `.cc-docker/cc-docker.yml` yourself
+instead — see [Legacy images](#legacy-images).
+
+When done, run Claude Code with `cc` from the project root (or any subdirectory).
 
 ### `cc` (the launcher)
 
@@ -134,8 +141,8 @@ repo only — it's what lets `cc-dev` refuse to run in any other project (see
 ./build.sh
 ```
 
-**2. Set up your project** — hand-write `.cc-docker/cc-docker.yml` with the toolchain
-modules you need (see [Setting up a project](#setting-up-a-project)):
+**2. Set up your project** — run `init-cc` (prompts for modules + git identity), or
+hand-write `.cc-docker/cc-docker.yml` (see [Setting up a project](#setting-up-a-project)):
 
 ```yaml
 modules: [node, zulu]
@@ -230,8 +237,10 @@ final, from `bootstrap/` — no module touches it.
 
 ## Setting up a project
 
-Create `.cc-docker/cc-docker.yml` in your project root, selecting the toolchain
-modules you need with `modules:`:
+The quick way is `init-cc` (see [`init-cc.sh`](#init-ccsh)) — it prompts for modules and
+git identity and writes the config for you. To do it by hand, create
+`.cc-docker/cc-docker.yml` in your project root, selecting the toolchain modules you
+need with `modules:`:
 
 ```yaml
 modules: [node, zulu]   # or [] for just base; see Stack modules for what's available

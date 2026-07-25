@@ -229,8 +229,10 @@ YAML parsing stays in containers.
 Tracked in the README's Open questions / Future refinements; listed here for
 completeness and rough ordering:
 
-- **Interactive `modules:` authoring in init-cc** (multi-select menu, module
-  discovery, legacy-vs-modular offer).
+- **Interactive `modules:` authoring in init-cc** — **done** (basic): discovers
+  `stack/*`, prompts for a space-separated module list, validates against known
+  modules, writes `modules:`. A fancy multi-select toggle / legacy-image offer could
+  still be added.
 - **Per-project apt** (`apt: [...]` in `cc-docker.yml`) → union layer in the final;
   triggers the **hashed tag + descriptive labels** scheme.
 - **Module `runtime_deps` union install** codegen in cc-assemble.

@@ -560,12 +560,10 @@ of `toolchain/config/` (cc-config).
   nothing under `base/`/`stack/`/`bootstrap/` and the module set are unchanged since
   the last build, to save the ~1-2s cache-hashing per launch. POC always builds.
   _(open, deferred)_
-- **Interactive `modules:` authoring in init-cc** — post-POC: today init-cc shows a
-  numbered menu of `images/*` and writes `image: cc-<x>`. A modular menu needs
-  module discovery from `stack/*`, a multi-select toggle, and a rule for offering
-  legacy `image:` vs modular `modules:`. POC: user hand-writes `modules:` in
-  `cc-docker.yml`; init-cc's launcher path only branches on `modules:` vs `image:`.
-  _(open, deferred)_
+- **Interactive `modules:` authoring in init-cc** — **done (basic).** init-cc now
+  discovers `stack/*`, prompts for a space-separated module list (validated), and
+  writes `modules:`. Legacy `image:`/raw compose are hand-written. A fancy
+  multi-select toggle and an explicit legacy-image offer remain possible refinements.
 - **Relocatable Python (for pdf2md)** — post-POC: package Python as a `stack/*`
   module via a relocatable distribution (python-build-standalone / uv), then
   install `pymupdf4llm` + the `pdf2md` wrapper into it. Unblocks the last of the
