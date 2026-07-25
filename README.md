@@ -31,52 +31,46 @@ Think of it as a seatbelt against *cross-project* leakage and agent-mediated acc
 
 ### `build.sh`
 
-Builds the `cc-*` Docker images in dependency order.
+Builds the reusable **building blocks** of the modular engine — the shared `base`
+image, the `stack/*` toolchain modules, and cc-docker's own `toolchain/*` images
+(`cc-config`, `cc-assemble`, `cc-dev`). It does **not** build the per-project runnable
+images; the `cc` launcher assembles those on demand (see
+[Stack modules](#stack-modules)).
 
 ```bash
-./build.sh              # build every discovered image
-./build.sh vue3         # build cc-vue3 and its transitive dependencies only
+./build.sh              # base + all toolchain/* + all stack/*   (full / CI / pre-warm)
+./build.sh node zulu    # base + just the named stack modules
 ```
 
-Images are auto-discovered from `images/*/Dockerfile`. Dependencies are inferred by scanning each Dockerfile for `FROM cc-<name>` and `COPY --from=cc-<name>` directives, then a topological sort ensures each image is built after anything it depends on. Dependency cycles are detected and reported as errors.
+`base` is always built first (everything stages `FROM base`). Every build is a plain
+`docker build`, so Docker's layer cache makes it a fast no-op when nothing changed.
+There's no dependency graph to maintain — modules are independent and *composed*, not
+chained.
 
-Adding a new image is just: create `images/<name>/Dockerfile` — no edits to `build.sh` required.
+The frozen pre-modular builder (the old `FROM cc-*` topo-sort over `images/`) lives at
+`legacy/build.sh`; see [Legacy images](#legacy-images).
 
 ### `init-cc.sh`
 
-Interactive setup for a new project. Source it into your shell first — either run `make install`
-from this repo (checks whether it's already sourced in `~/.bashrc` and appends it if not, no-op
-if it's already there), or add the two lines yourself:
+Source this into your shell to get the `cc` launcher (and the `init-cc` setup helper) — either
+run `make install` from this repo (checks whether it's already sourced in `~/.bashrc` and appends
+it if not, no-op if it's already there), or add the two lines yourself:
 
 ```bash
 export CC_DOCKER_DIR=/path/to/cc-docker
 source "$CC_DOCKER_DIR/init-cc.sh"
 ```
 
-Sourcing this file defines two shell functions: `init-cc` (setup, below) and `cc` (the launcher,
-see [`cc` (the launcher)](#cc-the-launcher)).
+Sourcing this file defines two shell functions: `init-cc` (interactive setup — see note below) and
+`cc` (the launcher, see [`cc` (the launcher)](#cc-the-launcher)).
 
-Then, from any project directory, run:
-
-```bash
-init-cc
-```
-
-It will prompt for:
-
-- **Project root** (defaults to the current directory)
-- **Image** — numbered menu, auto-discovered from the `images/` directory
-- **Git user name and email** (defaults to your global `git config` values)
-- **Configuration type** — *cc-docker native config (`cc-docker.yml`)*, preselected, or *raw
-  `docker-compose.yml`*
-- **Whether to add `.cc-docker/` to `.gitignore`**
-
-Native writes only `.cc-docker/cc-docker.yml` — the `cc` launcher generates
-`docker-compose.yml` from it on demand (see [Configuring cc-docker](#configuring-cc-docker-cc-dockeryml)).
-Raw writes `.cc-docker/docker-compose.yml` + `.cc-docker/.env` directly, same as before — edit
-those by hand as needed.
-
-When done, run Claude Code with `cc` from the project root (or any subdirectory).
+> **Note:** `init-cc`'s interactive menu is currently keyed to the pre-modular
+> `images/` layout and is being reworked for module selection (see
+> [`docs/modular-build-engine/`](docs/modular-build-engine/), deferred item). For now,
+> set up a modular project by **hand-writing** `.cc-docker/cc-docker.yml` with a
+> `modules:` list — see [Setting up a project](#setting-up-a-project) and
+> [Configuring cc-docker](#configuring-cc-docker-cc-dockeryml). Sourcing `init-cc.sh`
+> is still how you get the `cc` launcher function.
 
 ### `cc` (the launcher)
 
@@ -87,46 +81,45 @@ Defined by `init-cc.sh` alongside `init-cc`. On each invocation it:
 2. If `.cc-docker/cc-docker.yml` exists, regenerates `.cc-docker/docker-compose.yml` from it via
    the `cc-config` image, every time — generation only takes a few ms, so there's no staleness
    check to get wrong.
-3. Otherwise, if a hand-written `.cc-docker/docker-compose.yml` exists, uses it directly — no
+3. **Modular mode** (config has `modules:`): `cc-config` also writes the tag/module
+   sidecars, then `cc` runs `cc-assemble` (→ `assembled.Dockerfile`), builds `base` +
+   the selected stacks via `build.sh`, and builds the per-project final image (under a
+   lock). All are plain `docker build`s, so unchanged pieces are cache no-ops.
+4. Otherwise, if a hand-written `.cc-docker/docker-compose.yml` exists, uses it directly — no
    regeneration. This is what keeps existing raw-compose projects working unchanged.
-4. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
+5. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
 
 So with a native `cc-docker.yml`, editing it and re-running `cc` always picks up the change —
-no manual regenerate step needed.
-
-### Shell completion
-
-Add one line to your `~/.bashrc` (use the actual path where you cloned this repo):
-
-```bash
-source /path/to/cc-docker/completions/build.bash
-```
-
-This gives `./build.sh <TAB>` completion against the live list of images. The image list is read at completion time, so adding or removing an image directory is reflected immediately — no re-sourcing needed.
+no manual regenerate step needed. Editing a `bootstrap/` script only rebuilds that final layer;
+the toolchains stay cached.
 
 ## Project Structure
 
 ```
 .
 ├── .cc-docker-dev                # committed marker; see below
-├── .cc-docker/                   # created by init-cc per project, gitignored (personal, not committed)
-│   ├── cc-docker.yml             # native config (source of truth), or:
-│   ├── docker-compose.yml        # ...generated from it, or hand-written (raw)
-│   └── .env                      # raw only: git identity
-├── images/
-│   ├── base/
-│   │   ├── cc-wrapper.sh        # Entrypoint (root phase): matches host UID/GID, re-execs via gosu
-│   │   ├── run-as-hostuser.sh   # User phase: applies git config, clears terminal, runs claude
-│   │   └── Dockerfile           # Debian Bookworm slim + Claude Code CLI (cc-base)
-│   ├── node20/
-│   │   └── Dockerfile           # cc-base + Node.js 20 (cc-node20)
-│   ├── vue3/
-│   │   └── Dockerfile           # cc-node20 + Yarn via corepack (cc-vue3)
-│   └── zulu21/
-│       └── Dockerfile           # cc-base + Azul Zulu JDK 21 (cc-zulu21)
-└── toolchain/                    # cc-docker's own tooling images, not offered by init-cc's menu
-    ├── config/                   # cc-config: generates docker-compose.yml from cc-docker.yml
-    └── dev/                      # cc-dev: this repo's own dev environment (see below)
+├── .cc-docker/                   # per-project, gitignored: config + generated artifacts
+│   ├── cc-docker.yml             # native config (source of truth)
+│   ├── docker-compose.yml        # generated from it (or hand-written, raw)
+│   ├── assembled.Dockerfile      # modular: generated recipe for the final image
+│   ├── assembled.tag             # modular: final image tag (e.g. cc/node-zulu)
+│   └── assembled.modules         # modular: selected module names (for the launcher)
+├── base/
+│   └── Dockerfile                # shared `base` image: Debian Bookworm slim + Claude CLI
+├── stack/                        # relocatable toolchain modules, composed into finals
+│   ├── node/                     # → stack/node:<version>   (Dockerfile + module.yml)
+│   └── zulu/                     # → stack/zulu:<version>
+├── bootstrap/                    # entrypoint scripts baked into every final image
+│   ├── cc-wrapper.sh             #   root phase: match host UID/GID, re-exec via gosu
+│   ├── run-as-hostuser.sh        #   user phase: git config, runs claude
+│   └── sandbox.md                #   appended to claude's system prompt
+├── toolchain/                    # cc-docker's own tooling images
+│   ├── config/                   # cc-config: cc-docker.yml → docker-compose.yml (+ sidecars)
+│   ├── assemble/                 # cc-assemble: modules → assembled.Dockerfile
+│   └── dev/                      # cc-dev: this repo's own dev environment (see below)
+├── build.sh                      # modular block builder
+├── docs/modular-build-engine/    # the design, reviews, and roadmap
+└── legacy/                       # frozen pre-modular impl (old cc-* images + builder)
 ```
 
 `.cc-docker-dev` (a file at the repo root, not inside `.cc-docker/`) is a marker committed to this
@@ -135,17 +128,22 @@ repo only — it's what lets `cc-dev` refuse to run in any other project (see
 
 ## Usage
 
-**1. Build the images:**
+**1. Build the blocks** (base + modules + toolchain images) — once, and after edits:
 
 ```bash
 ./build.sh
 ```
 
-**2. Set up your project** (see [`init-cc.sh`](#init-ccsh) — prompts for image, git identity, and
-config type):
+**2. Set up your project** — hand-write `.cc-docker/cc-docker.yml` with the toolchain
+modules you need (see [Setting up a project](#setting-up-a-project)):
 
-```bash
-init-cc
+```yaml
+modules: [node, zulu]
+git:
+  name: Your Name
+  email: you@example.com
+mounts:
+  - path: .
 ```
 
 **3. Run Claude Code:**
@@ -155,35 +153,51 @@ cc
 ```
 
 `cc` works from the project root or any subdirectory (see [`cc` (the launcher)](#cc-the-launcher)).
-This mounts your project files, Claude credentials, and auth state into the container. See [The cc-base environment](#the-cc-base-environment) for how ownership and credentials work.
+It assembles and builds your project's image on demand, then mounts your project files, Claude
+credentials, and auth state into the container. See [The container environment](#the-container-environment)
+for how ownership and credentials work.
 
-## Images
+## Stack modules
 
-| Image | Description |
-|-------|-------------|
-| `cc-base` | Debian Bookworm slim + Claude Code CLI (installed via official install script). General-purpose starting point. |
-| `cc-node20` | Extends `cc-base` with Node.js 20 from NodeSource. |
-| `cc-vue3` | Extends `cc-node20` with Yarn (via corepack). Use for Vue 3 projects. |
-| `cc-zulu21` | Extends `cc-base` with Azul Zulu JDK 21. Use for Java projects. |
+Instead of a fixed set of prebuilt images chained by `FROM`, a project's image is
+**composed** from `base` plus the relocatable toolchain modules it selects in
+`cc-docker.yml`:
 
-### Dependency tree
+| Module | Provides |
+|--------|----------|
+| `node` | Node.js (tarball) with corepack/yarn — replaces the old `cc-node20`/`cc-vue3` |
+| `zulu` | Azul Zulu JDK — replaces the old `cc-zulu21` |
 
-`build.sh` derives this chain from `FROM`/`COPY --from` directives automatically, so new images slot in without any manual configuration.
+Select them with `modules:` (e.g. `modules: [node, zulu]` for a project needing both;
+`modules: []` for just `base`). The result is a single assembled image tagged
+`cc/<sorted-modules>` (e.g. `cc/node-zulu`), built on demand by `cc`.
 
-```
-cc-base
-├── cc-node20
-│   └── cc-vue3
-└── cc-zulu21
-```
+Each module is a directory under `stack/` with a `Dockerfile` (a *staging* build that
+downloads the toolchain into one self-contained dir) and a `module.yml` (metadata:
+version, artifact dirs, env). Adding a toolchain is just: create `stack/<name>/` with
+those two files — no build graph to edit.
 
-## The cc-base environment
+### How the modular build works
 
-`cc-base` is a Debian Bookworm slim image with the Claude Code CLI pre-installed. It is designed to be a general-purpose starting point that other images (like `cc-vue3`) extend by adding project-specific tooling.
+`base` (Debian slim + Claude CLI, no entrypoint) is the shared foundation. Each
+`stack/*` module builds `FROM base` and packages a relocatable toolchain into one
+directory. For a given project, `cc-assemble` generates a Dockerfile that
+`COPY --from`s the selected modules onto `base`, merges their env, and bakes the
+`bootstrap/` scripts + `ENTRYPOINT` — producing the runnable `cc/<modules>` image.
+Because the volatile bootstrap scripts are the *last* layers, editing them rebuilds
+only that tail while the toolchains stay cached — the design's core win. See
+[`docs/modular-build-engine/`](docs/modular-build-engine/) for the full design,
+reviews, and rationale.
+
+## The container environment
+
+`base` is a Debian Bookworm slim image with the Claude Code CLI pre-installed. It is
+the shared foundation every project's assembled image is built on; stack modules add
+toolchains and the `bootstrap/` scripts provide the entrypoint.
 
 ### The `hostuser` model
 
-The defining feature of `cc-base` is that it runs Claude Code as a user whose UID and GID match yours on the host. At startup, the entrypoint reads the UID/GID from the project directory (via the `PROJECT_DIR` environment variable):
+The defining feature of the container is that it runs Claude Code as a user whose UID and GID match yours on the host. At startup, the entrypoint (baked from `bootstrap/`) reads the UID/GID from the project directory (via the `PROJECT_DIR` environment variable):
 
 ```bash
 HOST_UID=$(stat -c "%u" "$PROJECT_DIR")
@@ -205,32 +219,21 @@ Startup is split across two scripts because privilege drop requires root:
 | 1 | `cc-wrapper.sh` | root | Reads host UID/GID from `$PROJECT_DIR`, creates `hostgroup`/`hostuser`, `chown`s the home dir, re-execs via `gosu hostuser` |
 | 2 | `run-as-hostuser.sh` | hostuser | Applies `GIT_USER_NAME`/`GIT_USER_EMAIL` if set, marks `$PROJECT_DIR` as a git safe directory, clears the terminal, runs `claude` |
 
-### Extending cc-base
+### Never bake in a `USER`
 
-When building a child image, only add tooling — do not create a fixed user or set a `USER` directive. The UID match happens at runtime from the `$PROJECT_DIR` mount, so baking in a user would break the ownership alignment. `cc-node20` and `cc-vue3` are canonical examples: `cc-node20` adds Node.js 20 on top of `cc-base`, and `cc-vue3` layers Yarn via corepack on top of `cc-node20` — neither touches the entrypoint.
+Neither `base` nor any `stack/*` module should create a fixed user or set a `USER`
+directive. The UID match happens at runtime from the `$PROJECT_DIR` mount, so baking in
+a user would break the ownership alignment. Stack modules only *add relocatable tooling*
+(a self-contained toolchain dir); the entrypoint is baked once, into the assembled
+final, from `bootstrap/` — no module touches it.
 
----
+## Setting up a project
 
-To use the Vue 3 image, update `docker-compose.yml` to reference `cc-vue3`, or run the container directly:
-
-```bash
-docker run -it --rm \
-  -v "$PWD":"$PWD" \
-  -w "$PWD" \
-  -e PROJECT_DIR="$PWD" \
-  -v ~/.claude:/home/hostuser/.claude \
-  -v ~/.claude.json:/home/hostuser/.claude.json \
-  cc-vue3
-```
-
-## Using cc-claude in another project
-
-The quickest way is `init-cc` (see [Scripts](#scripts) above) — it prompts for image, git
-identity, and config type, and writes native config by default. If you prefer to do it manually,
-create `.cc-docker/cc-docker.yml` in your project root yourself:
+Create `.cc-docker/cc-docker.yml` in your project root, selecting the toolchain
+modules you need with `modules:`:
 
 ```yaml
-image: cc-base  # or cc-vue3 for Vue 3 projects, or any other extension of cc-base
+modules: [node, zulu]   # or [] for just base; see Stack modules for what's available
 git:
   name: Your Name
   email: you@example.com
@@ -238,17 +241,21 @@ mounts:
   - path: .
 ```
 
+(A legacy prebuilt image can be used instead with `image: cc-…` — see
+[Legacy images](#legacy-images). Exactly one of `modules:` or `image:` is required.)
+
 Then from your project root:
 
 ```bash
-# Build cc-base first (only needed once), from the cc-docker checkout
+# Build the blocks once, from the cc-docker checkout
 /path/to/cc-docker/build.sh
 
 # Start Claude Code in your project
 cc
 ```
 
-`cc` generates `.cc-docker/docker-compose.yml` from `cc-docker.yml` and runs it (see
+`cc` generates `.cc-docker/docker-compose.yml` from `cc-docker.yml`, assembles and
+builds your project's image, and runs it (see
 [Configuring cc-docker](#configuring-cc-docker-cc-dockeryml) for the full schema). The resulting
 compose file's volume mounts are the key pieces:
 
@@ -278,9 +285,13 @@ current all-gitignored setup is a deliberate starting point, not an oversight.
 
 `cc-docker.yml` fields:
 
+Exactly one of `modules` or `image` is required (a `oneOf` in the schema — supplying
+both, or neither, is a validation error).
+
 | Field | Type | Required | Description |
 |-------|------|----------|--------------|
-| `image` | string | yes | Docker image to run as the `cc` service, e.g. `cc-node20`. |
+| `modules` | list | one of | Modular: toolchain stack modules to compose, e.g. `[node, zulu]`. `[]` means just `base`. The `cc` launcher builds the assembled `cc/<sorted-modules>` image. |
+| `image` | string | one of | Legacy: a prebuilt image to run directly, e.g. `cc-dev` or a `legacy/` image. Mutually exclusive with `modules`. |
 | `git.name` / `git.email` | string | no | Git identity, exposed to the container as `GIT_USER_NAME` / `GIT_USER_EMAIL`. |
 | `env` | map | no | Extra environment variables merged into the `cc` service. |
 | `readonly` | boolean | no | If true, all mounts declared in `mounts` are read-only. Defaults to `false`. |
@@ -292,7 +303,7 @@ current all-gitignored setup is a deliberate starting point, not an oversight.
 Example:
 
 ```yaml
-image: cc-node20
+modules: [node]
 git:
   name: Your Name
   email: you@example.com
@@ -304,9 +315,9 @@ mounts:
 ```
 
 `cc-config` validates `cc-docker.yml` against a JSON Schema
-(`toolchain/config/cc-docker.schema.json`) before generating anything — an unknown key, a missing
-`image`, or a `mounts` entry without a `path` all fail with a readable error instead of silently
-producing a broken compose file.
+(`toolchain/config/cc-docker.schema.json`) before generating anything — an unknown key, supplying
+neither (or both) of `modules`/`image`, or a `mounts` entry without a `path` all fail with a
+readable error instead of silently producing a broken compose file.
 
 The `cc` launcher does this automatically on every invocation (see [`cc` (the launcher)](#cc-the-launcher)).
 To generate it by hand instead (e.g. for debugging):
@@ -321,7 +332,7 @@ docker run --rm \
 
 ### Clipboard image paste (X11/Wayland)
 
-`cc-base` ships `wl-clipboard` and `xclip`, so `claude` can paste images from the host clipboard.
+`base` ships `wl-clipboard` and `xclip`, so `claude` can paste images from the host clipboard.
 Getting the clipboard's *contents* across the container boundary needs the host's display socket
 forwarded in — a container has no access to the host's X11/Wayland session by default. `cc`
 handles this automatically: it reads `$WAYLAND_DISPLAY`/`$DISPLAY` etc. from your host shell and
@@ -399,8 +410,8 @@ once locally.
 
 Working on cc-docker means running `./build.sh` (`docker build`), `docker
 compose`, and `init-cc.sh` — all of which need Docker access. The stock
-`cc-base` (and every other image in `images/`) deliberately has neither the
-`docker` CLI nor access to a daemon, since giving a project container control
+`base` (and the assembled project images built on it) deliberately has neither
+the `docker` CLI nor access to a daemon, since giving a project container control
 of the host's Docker daemon is a real capability, not just another mount.
 
 For this repo specifically, `toolchain/dev/` builds a `cc-dev` image that adds
@@ -414,12 +425,12 @@ rebuilding the `cc-config` image on every edit.
 Bootstrap:
 
 ```bash
-./build.sh dev            # builds cc-base, then cc-dev, on the host
+./build.sh                # builds base + all toolchain/* (incl. cc-dev) + all stacks
 ```
 
 `.cc-docker/` is gitignored (see [Tracking](#configuring-cc-docker-cc-dockeryml)), so a fresh
-clone has no config yet. `init-cc`'s image menu won't offer `cc-dev` (it lives in `toolchain/`,
-not `images/`), so write `.cc-docker/cc-docker.yml` by hand instead:
+clone has no config yet. `cc-dev` is a legacy-style prebuilt image (a `toolchain/` image, not a
+`stack/*` module), so write `.cc-docker/cc-docker.yml` by hand with `image:`:
 
 ```yaml
 image: cc-dev
@@ -441,10 +452,10 @@ launch new privileged containers with arbitrary host mounts. That's a much
 bigger capability than the filesystem isolation the rest of cc-docker provides,
 so `cc-dev` is deliberately locked down two ways:
 
-- **Not offered as a choice.** `cc-dev` lives in `toolchain/dev/`, not
-  `images/`. `init-cc`'s image menu only scans `images/*`, so `cc-dev` never
-  shows up as something you'd pick for an ordinary project. (`build.sh` still
-  builds it — it scans both `images/*` and `toolchain/*`.)
+- **Not a composable module.** `cc-dev` lives in `toolchain/dev/`, not `stack/`,
+  so it can't be selected via `modules:` for an ordinary project — you'd have to
+  deliberately set `image: cc-dev`. (`build.sh` builds it along with the other
+  `toolchain/*` images.)
 - **Refuses to run outside this repo.** `cc-dev`'s entrypoint
   (`toolchain/dev/dev-wrapper.sh`) checks for a committed `.cc-docker-dev`
   marker file at the project root before starting, and exits with an error if
@@ -497,6 +508,29 @@ you forgot to clean up doesn't linger on the host daemon. This doesn't cover
 tracked by their own `com.docker.compose.project=cc-dev` label rather than
 `cc-dev=1`.
 
+## Legacy images
+
+The pre-modular implementation is preserved under `legacy/` and still works: the old
+`FROM cc-*` image tree (`cc-base`, `cc-node20`, `cc-vue3`, `cc-zulu21`, `cc-full`), the
+graph-based `legacy/build.sh`, and its Makefile + completions.
+
+```bash
+legacy/build.sh            # build every legacy image (topo-sort over legacy/images/)
+legacy/build.sh zulu21     # build cc-zulu21 and its dependencies only
+```
+
+To run a project on a prebuilt legacy image, set `image:` in `cc-docker.yml` instead of
+`modules:`:
+
+```yaml
+image: cc-zulu21
+mounts:
+  - path: .
+```
+
+New projects should prefer the modular `modules:` path; `legacy/` exists so existing
+setups keep working through the transition.
+
 ## Configuration
 
 Claude Code permissions are configured in `.claude/settings.local.json`. Edit this file to adjust which tools and operations Claude is allowed to perform inside the container.
@@ -523,4 +557,4 @@ GIT_USER_EMAIL=you@example.com
 Either way `.cc-docker/` is gitignored (see
 [Tracking](#configuring-cc-docker-cc-dockeryml)), so this is per-developer and never committed.
 The values are applied via `git config --global` at container startup
-(`images/base/run-as-hostuser.sh`).
+(`bootstrap/run-as-hostuser.sh`).
