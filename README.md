@@ -170,7 +170,8 @@ Instead of a fixed set of prebuilt images chained by `FROM`, a project's image i
 
 Select them with `modules:` (e.g. `modules: [node, zulu]` for a project needing both;
 `modules: []` for just `base`). The result is a single assembled image tagged
-`cc/<sorted-modules>` (e.g. `cc/node-zulu`), built on demand by `cc`.
+`cc/<sorted-modules>` (e.g. `cc/node-zulu`), built on demand by `cc`. Run `make stacks`
+to list the available modules with their versions.
 
 Each module is a directory under `stack/` with a `Dockerfile` (a *staging* build that
 downloads the toolchain into one self-contained dir) and a `module.yml` (metadata:
