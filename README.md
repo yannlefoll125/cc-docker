@@ -310,6 +310,7 @@ both, or neither, is a validation error).
 | `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
 | `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to keep using the mounted `~/.claude` OAuth login. See [API key auth](#api-key-auth-optional). |
 | `docker_socket` | boolean | no | If true, mounts the host's `/var/run/docker.sock` into the container and grants `hostuser` access to it. Grants **root-equivalent access to the host Docker daemon** — see [Why cc-dev is restricted to this repo](#why-cc-dev-is-restricted-to-this-repo) for what that means. Defaults to `false`. Note `base` ships no `docker` CLI, so a plain `modules:` project still needs one installed some other way to actually use the socket. |
+| `permission_mode` | string | no | Passed through to `claude --permission-mode` (`acceptEdits` \| `auto` \| `bypassPermissions` \| `manual` \| `dontAsk` \| `plan`). Omit to use claude's own default. Only takes effect with `modules:` — frozen `legacy/` (`image:`) entrypoints predate this option and ignore it. |
 
 Example:
 

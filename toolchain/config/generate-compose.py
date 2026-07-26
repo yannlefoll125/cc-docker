@@ -278,6 +278,8 @@ def main():
     if git_cfg.get("email"):
         environment["GIT_USER_EMAIL"] = git_cfg["email"]
     environment["PROJECT_DIR"] = project_dir
+    if config.get("permission_mode"):
+        environment["CC_PERMISSION_MODE"] = config["permission_mode"]
     environment.update(env_cfg)
 
     apply_display(config, environment, volumes)

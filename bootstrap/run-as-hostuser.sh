@@ -14,6 +14,9 @@ fi
 [ -n "$GIT_USER_EMAIL" ] && echo "setting email '$GIT_USER_EMAIL'" && git config --global user.email "$GIT_USER_EMAIL"
 git config --global --add safe.directory "$PROJECT_DIR"
 
+permission_mode_args=()
+[ -n "$CC_PERMISSION_MODE" ] && permission_mode_args=(--permission-mode "$CC_PERMISSION_MODE")
+
 clear
-claude --append-system-prompt "$(cat /sandbox.md)" "$@"
+claude --append-system-prompt "$(cat /sandbox.md)" "${permission_mode_args[@]}" "$@"
 clear

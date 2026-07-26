@@ -88,6 +88,11 @@
     "anthropic_api_key_file": {
       "type": "string",
       "description": "Path on the host to a file whose entire contents are your Anthropic API key. Delivered to the container as a Docker secret mounted at /run/secrets/anthropic_api_key; the entrypoint exports it as ANTHROPIC_API_KEY before launching claude. Never written into the generated compose file or the container environment. Supports a leading ~ (host home) and absolute paths. Optional — omit to keep using the mounted ~/.claude OAuth login."
+    },
+    "permission_mode": {
+      "type": "string",
+      "description": "Passed through to `claude --permission-mode`, controlling how the session handles permission prompts on startup. Optional — omit to use claude's own default.",
+      "enum": ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]
     }
   }
 }
