@@ -164,6 +164,11 @@ cc() {
             fi
         fi
 
+        # Ensure the config-generator image exists (normally pre-built by build.sh).
+        docker image inspect cc-config >/dev/null 2>&1 \
+            || docker build -t cc-config "$CC_DOCKER_DIR/toolchain/config" >/dev/null \
+            || return 1
+
         docker run --rm \
             -e PROJECT_DIR="$dir" \
             -e HOST_UID="$(id -u)" \
