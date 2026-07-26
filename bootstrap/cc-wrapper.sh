@@ -47,6 +47,24 @@ chown "$HOST_UID:$HOST_GID" /home/hostuser
 # since PROJECT_DIR already has this UID.
 chown "$HOST_UID:$HOST_GID" "$PROJECT_DIR"
 
+
+# Docker socket (docker_socket: true in cc-docker.yml mounts it in, root-owned
+# on the host). Add hostuser to the group that owns it so it can actually use
+# the mount — gosu resolves supplementary groups by name at drop time below,
+# so adding hostuser to the group here (it already exists, unlike dev-wrapper.sh's
+# equivalent step) takes effect.
+if [ -S /var/run/docker.sock ]; then
+  sock_gid=$(stat -c "%g" /var/run/docker.sock)
+  if [ "$sock_gid" != 0 ]; then
+    grp=$(getent group "$sock_gid" | cut -d: -f1)
+    if [ -z "$grp" ]; then
+      groupadd -g "$sock_gid" dockerhost
+      grp=dockerhost
+    fi
+    usermod -aG "$grp" hostuser
+  fi
+fi
+
 [ -n "$GIT_USER_NAME" ]  && export GIT_USER_NAME
 [ -n "$GIT_USER_EMAIL" ] && export GIT_USER_EMAIL
 

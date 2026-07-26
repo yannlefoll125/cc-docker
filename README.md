@@ -309,6 +309,7 @@ both, or neither, is a validation error).
 | `extra_mounts` | list | no | Raw docker compose volume entries, appended verbatim — no validation. |
 | `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
 | `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to keep using the mounted `~/.claude` OAuth login. See [API key auth](#api-key-auth-optional). |
+| `docker_socket` | boolean | no | If true, mounts the host's `/var/run/docker.sock` into the container and grants `hostuser` access to it. Grants **root-equivalent access to the host Docker daemon** — see [Why cc-dev is restricted to this repo](#why-cc-dev-is-restricted-to-this-repo) for what that means. Defaults to `false`. Note `base` ships no `docker` CLI, so a plain `modules:` project still needs one installed some other way to actually use the socket. |
 
 Example:
 
@@ -446,11 +447,10 @@ clone has no config yet. `cc-dev` is a legacy-style prebuilt image (a `toolchain
 image: cc-dev
 mounts:
   - path: .
-extra_mounts:
-  - /var/run/docker.sock:/var/run/docker.sock  # required: gives cc-dev the docker CLI/daemon access above
+docker_socket: true  # required: gives cc-dev the docker CLI/daemon access above
 ```
 
-Then `cc` generates `.cc-docker/docker-compose.yml` from it and runs it. Add further personal
+Then `cc` generates `.cc-docker/docker-compose.yml` from it and runs it. Add personal
 `extra_mounts` entries as needed (e.g. a screenshot tool's temp dir) — they're not required for
 cc-dev itself.
 

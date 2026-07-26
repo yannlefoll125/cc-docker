@@ -80,6 +80,11 @@
         "type": ["object", "string"]
       }
     },
+    "docker_socket": {
+      "type": "boolean",
+      "description": "Mount the host's /var/run/docker.sock into the container, granting root-equivalent access to the host Docker daemon (it can launch privileged containers with arbitrary host mounts). Disabled by default — only enable this for a project you trust with that level of host access.",
+      "default": false
+    },
     "anthropic_api_key_file": {
       "type": "string",
       "description": "Path on the host to a file whose entire contents are your Anthropic API key. Delivered to the container as a Docker secret mounted at /run/secrets/anthropic_api_key; the entrypoint exports it as ANTHROPIC_API_KEY before launching claude. Never written into the generated compose file or the container environment. Supports a leading ~ (host home) and absolute paths. Optional — omit to keep using the mounted ~/.claude OAuth login."

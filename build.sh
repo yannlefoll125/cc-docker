@@ -38,7 +38,14 @@ build_toolchain() {
   local name=$1 dir="toolchain/$1"
   [[ -f "$dir/Dockerfile" ]] || return 0
   echo ">>> building cc-$name"
-  docker build -t "cc-$name" "$dir"
+  if [[ "$name" == dev ]]; then
+    # cc-dev's Dockerfile also COPYs the shared bootstrap/ entrypoint chain
+    # (cc-wrapper.sh, run-as-hostuser.sh, sandbox.md), so it needs the repo
+    # root as build context, not just toolchain/dev.
+    docker build -t "cc-$name" -f "$dir/Dockerfile" .
+  else
+    docker build -t "cc-$name" "$dir"
+  fi
 }
 
 # base first — everything else stages FROM it.

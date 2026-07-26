@@ -187,6 +187,24 @@ def apply_display(config, environment, volumes):
         volumes.append("${XAUTHORITY}:/home/hostuser/.Xauthority:ro")
 
 
+def apply_docker_socket(config, volumes):
+    """Mount the host's Docker socket in, if opted into via `docker_socket:
+    true`. This grants root-equivalent access to the host daemon — see the
+    schema description. cc-wrapper.sh (bootstrap/) grants the in-container
+    hostuser access to the mounted socket at container start, since it's
+    root-owned on the host.
+    """
+    if not config.get("docker_socket", False):
+        return
+    volumes.append(
+        {
+            "type": "bind",
+            "source": "/var/run/docker.sock",
+            "target": "/var/run/docker.sock",
+        }
+    )
+
+
 def main():
     project_dir = os.environ.get("PROJECT_DIR")
     if not project_dir:
@@ -263,6 +281,7 @@ def main():
     environment.update(env_cfg)
 
     apply_display(config, environment, volumes)
+    apply_docker_socket(config, volumes)
 
     service = {
         "image": image,
