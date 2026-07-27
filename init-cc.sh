@@ -114,6 +114,11 @@ EOF
 # and runs it. Works from any subdirectory of the project by walking up to find
 # .cc-docker/. Backward compatible: a project with only a hand-written
 # docker-compose.yml (no cc-docker.yml) runs directly, no regeneration.
+#
+# By default cc does NOT (re)build the assembled image — it just runs whatever is
+# already built (fast path). Pass `--build` (or set CC_BUILD=1) to assemble and
+# build first; without it, a missing image fails fast with a build hint rather than
+# a confusing registry-pull error.
 cc() {
     # Self-refresh: pick up edits/updates to init-cc.sh without a manual re-source.
     # Re-source then re-exec so THIS invocation runs the latest on-disk version; the
@@ -124,6 +129,14 @@ cc() {
         return $?
     fi
     unset _CC_REEXEC
+
+    # Build gating: default is run-only (no build). A leading `--build` or CC_BUILD=1
+    # opts into the assemble+build path. Consume the flag so it never reaches claude.
+    local do_build="${CC_BUILD:-}"
+    if [[ "${1:-}" == "--build" ]]; then
+        do_build=1
+        shift
+    fi
 
     local dir="$PWD"
     while [[ ! -d "$dir/.cc-docker" && "$dir" != "/" ]]; do
@@ -183,35 +196,46 @@ cc() {
             cc-config || return 1
 
         # Modular mode: cc-config wrote .cc-docker/assembled.tag (+ assembled.modules).
-        # Assemble the per-project Dockerfile, build its blocks, then the final image.
-        # Legacy `image:` configs leave no assembled.tag, so this whole block is skipped.
+        # With --build, assemble the per-project Dockerfile, build its blocks, then the
+        # final image; otherwise just verify the image is already built (run-only fast
+        # path). Legacy `image:` configs leave no assembled.tag, so this is skipped.
         if [[ -f "$target_dir/assembled.tag" ]]; then
             local tag; tag="$(cat "$target_dir/assembled.tag")"
-            local modules=(); mapfile -t modules < "$target_dir/assembled.modules"
 
-            # Ensure the assembler image exists (normally pre-built by build.sh).
-            docker image inspect cc-assemble >/dev/null 2>&1 \
-                || docker build -t cc-assemble "$CC_DOCKER_DIR/toolchain/assemble" >/dev/null \
-                || return 1
+            if [[ -n "$do_build" ]]; then
+                local modules=(); mapfile -t modules < "$target_dir/assembled.modules"
 
-            # Generate assembled.Dockerfile from modules: + each module.yml.
-            docker run --rm \
-                -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
-                -v "$target_dir":/out \
-                -v "$CC_DOCKER_DIR/stack":/stack:ro \
-                cc-assemble || return 1
+                # Ensure the assembler image exists (normally pre-built by build.sh).
+                docker image inspect cc-assemble >/dev/null 2>&1 \
+                    || docker build -t cc-assemble "$CC_DOCKER_DIR/toolchain/assemble" >/dev/null \
+                    || return 1
 
-            # Build base + this project's stacks (scoped; always build, cache decides).
-            "$CC_DOCKER_DIR/build.sh" base "${modules[@]}" || return 1
+                # Generate assembled.Dockerfile from modules: + each module.yml.
+                docker run --rm \
+                    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+                    -v "$target_dir":/out \
+                    -v "$CC_DOCKER_DIR/stack":/stack:ro \
+                    cc-assemble || return 1
 
-            # Build the assembled final under a per-tag flock in a shared, user-writable
-            # location (the final is global per module set → the lock is cross-project).
-            local lock_dir="${XDG_RUNTIME_DIR:-/tmp}/cc-docker/locks"
-            mkdir -p "$lock_dir"
-            local lock_file="$lock_dir/$(printf '%s' "$tag" | tr '/:' '__').lock"
-            ( flock 9 || exit 1
-              docker build -f "$target_dir/assembled.Dockerfile" -t "$tag" "$CC_DOCKER_DIR/bootstrap"
-            ) 9>"$lock_file" || return 1
+                # Build base + this project's stacks (scoped; always build, cache decides).
+                "$CC_DOCKER_DIR/build.sh" base "${modules[@]}" || return 1
+
+                # Build the assembled final under a per-tag flock in a shared, user-writable
+                # location (the final is global per module set → the lock is cross-project).
+                local lock_dir="${XDG_RUNTIME_DIR:-/tmp}/cc-docker/locks"
+                mkdir -p "$lock_dir"
+                local lock_file="$lock_dir/$(printf '%s' "$tag" | tr '/:' '__').lock"
+                ( flock 9 || exit 1
+                  docker build -f "$target_dir/assembled.Dockerfile" -t "$tag" "$CC_DOCKER_DIR/bootstrap"
+                ) 9>"$lock_file" || return 1
+            elif ! docker image inspect "$tag" >/dev/null 2>&1; then
+                # Run-only path, but the image was never built. The compose file pins
+                # `image: <tag>` (no build:), so `compose run` would just fail on a
+                # registry pull — bail here with an actionable hint instead.
+                echo "Error: image '$tag' is not built yet." >&2
+                echo "Run 'cc --build' (or set CC_BUILD=1) to assemble and build it." >&2
+                return 1
+            fi
         fi
     elif [[ ! -f "$compose_file" ]]; then
         echo "Error: no cc-docker.yml or docker-compose.yml found in $target_dir." >&2

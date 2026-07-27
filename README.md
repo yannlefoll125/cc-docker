@@ -34,7 +34,7 @@ Think of it as a seatbelt against *cross-project* leakage and agent-mediated acc
 Builds the reusable **building blocks** of the modular engine — the shared `base`
 image, the `stack/*` toolchain modules, and cc-docker's own `toolchain/*` images
 (`cc-config`, `cc-assemble`, `cc-dev`). It does **not** build the per-project runnable
-images; the `cc` launcher assembles those on demand (see
+images; the `cc` launcher assembles those on demand when invoked with `--build` (see
 [Stack modules](#stack-modules)).
 
 ```bash
@@ -72,8 +72,8 @@ Then, from any project directory, run `init-cc`. It prompts for:
 - **Git user name and email** (defaults to your global `git config` values)
 - **Whether to add `.cc-docker/` to `.gitignore`**
 
-It writes `.cc-docker/cc-docker.yml` with your `modules:` list; the `cc` launcher
-assembles and builds the image on demand. For a legacy prebuilt image (e.g. `cc-dev`)
+It writes `.cc-docker/cc-docker.yml` with your `modules:` list; run `cc --build` to
+assemble and build the image (plain `cc` just runs it). For a legacy prebuilt image (e.g. `cc-dev`)
 or a hand-written raw `docker-compose.yml`, write `.cc-docker/cc-docker.yml` yourself
 instead — see [Legacy images](#legacy-images).
 
@@ -89,16 +89,19 @@ Defined by `init-cc.sh` alongside `init-cc`. On each invocation it:
    the `cc-config` image, every time — generation only takes a few ms, so there's no staleness
    check to get wrong.
 3. **Modular mode** (config has `modules:`): `cc-config` also writes the tag/module
-   sidecars, then `cc` runs `cc-assemble` (→ `assembled.Dockerfile`), builds `base` +
-   the selected stacks via `build.sh`, and builds the per-project final image (under a
-   lock). All are plain `docker build`s, so unchanged pieces are cache no-ops.
+   sidecars. By default `cc` is **run-only** — it does not (re)build; if the assembled
+   image doesn't exist yet it fails fast with a hint. Pass `--build` (or set
+   `CC_BUILD=1`) to build first: `cc` runs `cc-assemble` (→ `assembled.Dockerfile`),
+   builds `base` + the selected stacks via `build.sh`, and builds the per-project final
+   image (under a lock). All are plain `docker build`s, so unchanged pieces are cache no-ops.
 4. Otherwise, if a hand-written `.cc-docker/docker-compose.yml` exists, uses it directly — no
    regeneration. This is what keeps existing raw-compose projects working unchanged.
 5. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
 
-So with a native `cc-docker.yml`, editing it and re-running `cc` always picks up the change —
-no manual regenerate step needed. Editing a `bootstrap/` script only rebuilds that final layer;
-the toolchains stay cached.
+So with a native `cc-docker.yml`, editing it and re-running `cc` always picks up config
+changes (the compose file regenerates every time). Changes to the *image* — editing a
+`bootstrap/` script, a stack, or the `modules:` list — need a `cc --build` to take effect;
+that only rebuilds what changed, since the toolchains stay cached.
 
 ## Project Structure
 
@@ -153,14 +156,16 @@ mounts:
   - path: .
 ```
 
-**3. Run Claude Code:**
+**3. Build the image, then run Claude Code:**
 
 ```bash
-cc
+cc --build   # first run (and after any image/module change): assemble + build
+cc           # subsequent runs: just launch the already-built image
 ```
 
 `cc` works from the project root or any subdirectory (see [`cc` (the launcher)](#cc-the-launcher)).
-It assembles and builds your project's image on demand, then mounts your project files, Claude
+Plain `cc` is run-only and launches fast; `cc --build` (or `CC_BUILD=1`) assembles and builds
+your project's image first. Either way it then mounts your project files, Claude
 credentials, and auth state into the container. See [The container environment](#the-container-environment)
 for how ownership and credentials work.
 
@@ -179,7 +184,7 @@ Instead of a fixed set of prebuilt images chained by `FROM`, a project's image i
 
 Select them with `modules:` (e.g. `modules: [node, zulu]` for a project needing both;
 `modules: []` for just `base`). The result is a single assembled image tagged
-`cc/<sorted-modules>` (e.g. `cc/node-zulu`), built on demand by `cc`. Run `make stacks`
+`cc/<sorted-modules>` (e.g. `cc/node-zulu`), built by `cc --build`. Run `make stacks`
 to list the available modules with their versions.
 
 Each module is a directory under `stack/` with a `Dockerfile` (a *staging* build that
@@ -302,7 +307,7 @@ both, or neither, is a validation error).
 
 | Field | Type | Required | Description |
 |-------|------|----------|--------------|
-| `modules` | list | one of | Modular: toolchain stack modules to compose, e.g. `[node, zulu]`. `[]` means just `base`. The `cc` launcher builds the assembled `cc/<sorted-modules>` image. |
+| `modules` | list | one of | Modular: toolchain stack modules to compose, e.g. `[node, zulu]`. `[]` means just `base`. `cc --build` builds the assembled `cc/<sorted-modules>` image. |
 | `image` | string | one of | Legacy: a prebuilt image to run directly, e.g. `cc-dev` or a `legacy/` image. Mutually exclusive with `modules`. |
 | `git.name` / `git.email` | string | no | Git identity, exposed to the container as `GIT_USER_NAME` / `GIT_USER_EMAIL`. |
 | `env` | map | no | Extra environment variables merged into the `cc` service. |
