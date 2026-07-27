@@ -61,8 +61,9 @@ export CC_DOCKER_DIR=/path/to/cc-docker
 source "$CC_DOCKER_DIR/init-cc.sh"
 ```
 
-Sourcing this file defines two shell functions: `init-cc` (interactive setup — see note below) and
-`cc` (the launcher, see [`cc` (the launcher)](#cc-the-launcher)).
+Sourcing this file defines three shell functions: `init-cc` (interactive setup — see note below),
+`cc` (the launcher, see [`cc` (the launcher)](#cc-the-launcher)), and `migrate-cc` (upgrade a
+pre-modular project to `modules:`, see [Legacy images](#legacy-images)).
 
 Then, from any project directory, run `init-cc`. It prompts for:
 
@@ -548,6 +549,49 @@ mounts:
 
 New projects should prefer the modular `modules:` path; `legacy/` exists so existing
 setups keep working through the transition.
+
+### Migrating a pre-modular project
+
+`migrate-cc` (defined in `init-cc.sh` alongside `init-cc`/`cc`) upgrades an existing project
+to the modular engine. Run it from anywhere in the project — it walks up to find `.cc-docker/`
+like `cc` does, or takes an explicit project root: `migrate-cc /path/to/project`. It handles both
+legacy shapes:
+
+- **`cc-docker.yml` in `image:` mode** — rewrites the `image:` line to an equivalent `modules:`
+  line, leaving every other field untouched.
+- **A hand-written `docker-compose.yml` with no `cc-docker.yml`** (the oldest raw setup) —
+  reverse-engineers a `cc-docker.yml` from it (image, git identity from `.env` or the
+  `environment:` block, `docker_socket`, `anthropic_api_key_file`), and lets `cc` regenerate the
+  compose file on its next run.
+
+Legacy image → module mapping:
+
+| Legacy image | Modules |
+|---|---|
+| `cc-base` | *(none — base only)* |
+| `cc-node20` | `node` |
+| `cc-vue3` | `node` |
+| `cc-zulu21` | `zulu` |
+| `cc-pdf2md` | `pdf2md` |
+| `cc-full` | `node python3` *(Ruby + extra CLI tooling have no module — a note is printed)* |
+
+An unknown image (e.g. `cc-dev` or a custom one) prompts for a module list, or is kept as-is in
+`image:` mode when left blank.
+
+Before touching disk, migrate-cc prints the exact `cc-docker.yml` it proposes to write, the backup it
+will take, and any advisories, then asks for confirmation — answer `n` (the default) and nothing is
+written. On approval it backs up anything it overwrites to `<file>.bak`. migrate-cc never builds —
+afterwards run `cc --build` (modular) or `cc` (a kept `image:`).
+
+When reverse-engineering a raw `docker-compose.yml`, migrate-cc parses the `cc` service's `volumes:`
+list (both short `src:tgt` and long `type: bind` forms) and sorts each entry: project binds (same
+host path in and out, at or under the compose's `working_dir`) become `mounts:` entries — `path: .`
+for the whole root, or a relative `path:` for a subdirectory; the host Docker socket becomes
+`docker_socket: true`; the mounts cc-config re-adds itself (the `~/.claude*` pair and the display
+sockets) are dropped; and anything else (custom host paths, caches, named volumes) is carried into
+`extra_mounts:` verbatim. A wholly read-only project maps to `readonly: true`; a mix of read-only
+and read-write project mounts can't be expressed by the all-or-nothing `readonly:` flag, so migrate-cc
+leaves them read-write and warns.
 
 ## Configuration
 
