@@ -174,6 +174,8 @@ Instead of a fixed set of prebuilt images chained by `FROM`, a project's image i
 |--------|----------|
 | `node` | Node.js (tarball) with corepack/yarn — replaces the old `cc-node20`/`cc-vue3` |
 | `zulu` | Azul Zulu JDK — replaces the old `cc-zulu21` |
+| `python3` | CPython (relocatable python-build-standalone) with pip |
+| `pdf2md` | `pdf2md` CLI — PDF → Markdown via pymupdf4llm (self-contained; bundles its own interpreter) |
 
 Select them with `modules:` (e.g. `modules: [node, zulu]` for a project needing both;
 `modules: []` for just `base`). The result is a single assembled image tagged

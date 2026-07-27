@@ -1,0 +1,22 @@
+name: python3
+version: "3.12"
+description: CPython 3.12 (relocatable python-build-standalone) with pip
+
+# EXTRA apt beyond what `base` provides, needed only to build the artifact in the
+# staging image (discarded after COPY). Empty: base already ships curl + tar + gzip.
+build_deps: []
+
+# apt the copied artifact needs at runtime in the final image. Empty: the
+# python-build-standalone build is a portable, statically-linked-libc interpreter
+# that runs on base's glibc alone.
+runtime_deps: []
+
+# Directories the assembler COPY --from's into the final image.
+artifacts:
+  - /usr/local/python
+
+# Env re-declared in the final image after the COPY (ENV is not inherited across
+# COPY --from). PATH is prepend-form so the assembler can merge it; the interpreter
+# and its pip live inside the copied dir, so both shims travel with it.
+env:
+  PATH: "/usr/local/python/bin:${PATH}"

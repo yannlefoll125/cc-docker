@@ -1,0 +1,21 @@
+name: pdf2md
+version: "1"
+description: pdf2md CLI — PDF to Markdown via pymupdf4llm (self-contained venv)
+
+# EXTRA apt beyond what `base` provides, for the staging build only. Empty: base
+# already ships curl + tar + gzip, and the bundled interpreter provides pip.
+build_deps: []
+
+# apt the copied artifact needs at runtime. Empty: pymupdf ships manylinux wheels
+# (bundled libs), so the tool runs on base's glibc alone.
+runtime_deps: []
+
+# Directories the assembler COPY --from's into the final image.
+artifacts:
+  - /usr/local/pdf2md
+
+# Env re-declared in the final image after the COPY. PATH exposes ONLY the launcher
+# (bin/), not the bundled interpreter under runtime/, so this module does not shadow
+# a `python3` from the python3 stack when both are selected.
+env:
+  PATH: "/usr/local/pdf2md/bin:${PATH}"
