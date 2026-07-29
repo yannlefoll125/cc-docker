@@ -22,6 +22,10 @@ MODULES_SIDECAR = Path("/out/assembled.modules")
 # Container-side view of the host's $PROJECT_DIR/.cc-docker/.claude bind source
 # (see the overlay mount below) — /out is that project's .cc-docker/, mounted r/w.
 OVERLAY_DIR = Path("/out/.claude")
+# Per-project sshd host-key dir (ssh: feature), scaffolded here and bind-mounted
+# into the container so the sandbox keeps one stable SSH host identity across
+# runs instead of minting a new key (and a client known_hosts warning) each time.
+SSH_HOSTKEYS_DIR = Path("/out/ssh")
 # Resolved relative to this script so it works both inside the cc-config image
 # (script + schema both copied to /) and when run directly from the repo
 # checkout (script + schema both live in toolchain/config/).
@@ -130,18 +134,18 @@ def build_mount_volumes(mounts_cfg, project_dir, readonly):
     return volumes, root_covered
 
 
-def resolve_api_key_file(path):
-    """Resolve `anthropic_api_key_file` to an absolute host path. A leading ~ or
+def resolve_host_path(path, field):
+    """Resolve a host path from the config to an absolute one. A leading ~ or
     ~/ is expanded against CC_HOST_HOME — the `cc` launcher's own home, forwarded
     in because this container has no other way to see it (same pattern as the
-    CC_HOST_* display vars). Emitting an absolute path here avoids depending on
-    docker compose's own (unverified) ~-expansion for `secrets.*.file`.
+    CC_HOST_* display vars). Emitting an absolute path avoids depending on
+    docker compose's own (unverified) ~-expansion for e.g. `secrets.*.file`.
     """
     if path == "~" or path.startswith("~/"):
         host_home = os.environ.get("CC_HOST_HOME")
         if not host_home:
             die(
-                "anthropic_api_key_file uses '~' but CC_HOST_HOME is not set — "
+                f"{field} uses '~' but CC_HOST_HOME is not set — "
                 "run via the `cc` launcher, not cc-config directly, or use an "
                 "absolute path instead"
             )
@@ -187,6 +191,91 @@ def apply_display(config, environment, volumes):
         volumes.append("${XAUTHORITY}:/home/hostuser/.Xauthority:ro")
 
 
+# SessionStart hook injecting /sandbox.md as session context, for claude sessions
+# cc-docker does NOT launch itself — notably the Claude Code desktop app connecting
+# over SSH, which auto-installs and invokes its own claude, bypassing both
+# run-as-hostuser.sh and the /opt/cc/bin PATH shim. There is no settings/env
+# equivalent of --append-system-prompt, so context injection via hook is the
+# closest parity available. Gated on CC_SANDBOX_PROMPTED (set by the launch paths
+# that already pass --append-system-prompt) so terminal sessions don't get the
+# prompt twice, and on /sandbox.md existing so the hook is inert anywhere else.
+SANDBOX_HOOK_CMD = (
+    "sh -c '[ -z \"$CC_SANDBOX_PROMPTED\" ] && [ -r /sandbox.md ]"
+    " && cat /sandbox.md || true'"
+)
+SANDBOX_HOOK_ENTRY = {"hooks": [{"type": "command", "command": SANDBOX_HOOK_CMD}]}
+
+
+def sync_sandbox_context_hook(enabled):
+    """Merge the sandbox-context SessionStart hook into the overlay settings.json
+    (the project-scoped settings every in-container session loads) when ssh: is
+    enabled, and remove exactly our entry when it isn't — user-added settings and
+    hooks are never touched.
+    """
+    settings_path = OVERLAY_DIR / "settings.json"
+    try:
+        settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    except ValueError:
+        warn(
+            "overlay .claude/settings.json is not valid JSON — "
+            "not syncing the sandbox context hook"
+        )
+        return
+    entries = settings.get("hooks", {}).get("SessionStart", [])
+    present = SANDBOX_HOOK_ENTRY in entries
+    if enabled and not present:
+        settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
+            SANDBOX_HOOK_ENTRY
+        )
+    elif not enabled and present:
+        entries.remove(SANDBOX_HOOK_ENTRY)
+        if not entries:
+            del settings["hooks"]["SessionStart"]
+        if not settings["hooks"]:
+            del settings["hooks"]
+    else:
+        return
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+def apply_ssh(config, environment, volumes, ports, project_dir):
+    """Wire up in-sandbox SSH access, if opted into via `ssh:`. Compose-side this
+    is: publish the sshd port ([bind:]port:22, loopback-bound by default), mount
+    the configured authorized_keys read-only, and mount the scaffolded
+    .cc-docker/ssh/ host-key dir read-write. Everything runtime (key generation,
+    sshd config, starting the daemon) happens in cc-wrapper.sh, keyed off CC_SSH.
+    Note: `docker compose run` only publishes these ports because the `cc`
+    launcher passes --service-ports.
+    """
+    ssh_cfg = config.get("ssh")
+    if not ssh_cfg:
+        return
+    authorized_keys = resolve_host_path(ssh_cfg["authorized_keys"], "ssh.authorized_keys")
+    port = ssh_cfg.get("port", 2222)
+    bind = ssh_cfg.get("bind", "127.0.0.1")
+    ports.append(f"{bind}:{port}:22")
+    volumes.append(
+        {
+            "type": "bind",
+            "source": authorized_keys,
+            "target": "/cc-ssh/authorized_keys",
+            "read_only": True,
+        }
+    )
+    SSH_HOSTKEYS_DIR.mkdir(parents=True, exist_ok=True)
+    volumes.append(
+        {
+            "type": "bind",
+            "source": str(Path(project_dir) / ".cc-docker" / "ssh"),
+            "target": "/cc-ssh/hostkeys",
+            "read_only": False,
+        }
+    )
+    environment["CC_SSH"] = "1"
+    # Purely informational — cc-wrapper.sh prints a ready-to-paste connect hint.
+    environment["CC_SSH_ADDR"] = f"{bind}:{port}"
+
+
 def apply_docker_socket(config, volumes):
     """Mount the host's Docker socket in, if opted into via `docker_socket:
     true`. This grants root-equivalent access to the host daemon — see the
@@ -227,7 +316,7 @@ def main():
     extra_mounts_cfg = config.get("extra_mounts", [])
     api_key_file = config.get("anthropic_api_key_file")
     if api_key_file:
-        api_key_file = resolve_api_key_file(api_key_file)
+        api_key_file = resolve_host_path(api_key_file, "anthropic_api_key_file")
 
     volumes, root_covered = build_mount_volumes(mounts_cfg, project_dir, readonly)
 
@@ -250,6 +339,7 @@ def main():
     overlay_settings = OVERLAY_DIR / "settings.json"
     if not overlay_settings.exists():
         overlay_settings.write_text("{}\n")
+    sync_sandbox_context_hook(bool(config.get("ssh")))
     volumes.append(
         {
             "type": "bind",
@@ -282,7 +372,9 @@ def main():
         environment["CC_PERMISSION_MODE"] = config["permission_mode"]
     environment.update(env_cfg)
 
+    ports = []
     apply_display(config, environment, volumes)
+    apply_ssh(config, environment, volumes, ports, project_dir)
     apply_docker_socket(config, volumes)
 
     service = {
@@ -298,6 +390,8 @@ def main():
         # a nonzero grace period would just be dead waiting time.
         "stop_grace_period": "0s",
     }
+    if ports:
+        service["ports"] = ports
     if api_key_file:
         # Delivered as a real Docker secret (a file under /run/secrets/, not an
         # env var) so the key never appears in `docker inspect`, this compose
@@ -322,6 +416,8 @@ def main():
         os.chown(OVERLAY_DIR, uid, gid)
         if overlay_settings.exists():
             os.chown(overlay_settings, uid, gid)
+        if SSH_HOSTKEYS_DIR.exists():
+            os.chown(SSH_HOSTKEYS_DIR, uid, gid)
 
     # Launcher sidecars. In modular mode write the tag + module-name list (so the host
     # never re-parses cc-docker.yml or recomputes the tag); in legacy mode clear any

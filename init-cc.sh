@@ -186,6 +186,18 @@ cc() {
             fi
         fi
 
+        # Same best-effort check for the ssh: block's authorized_keys — a missing
+        # file would otherwise surface as an opaque mount error at compose time.
+        local ssh_keys_file
+        ssh_keys_file="$(grep -E '^[[:space:]]+authorized_keys:' "$config_file" 2>/dev/null | head -1 \
+            | sed -E "s/^[[:space:]]+authorized_keys:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+        if [[ -n "$ssh_keys_file" ]]; then
+            local expanded_ssh_keys="${ssh_keys_file/#\~/$HOME}"
+            if [[ ! -f "$expanded_ssh_keys" ]]; then
+                echo "warning: ssh.authorized_keys '$ssh_keys_file' not found on host — SSH login will fail" >&2
+            fi
+        fi
+
         # Ensure the config-generator image exists (normally pre-built by build.sh).
         docker image inspect cc-config >/dev/null 2>&1 \
             || docker build -t cc-config "$CC_DOCKER_DIR/toolchain/config" >/dev/null \
@@ -252,7 +264,9 @@ cc() {
         return 1
     fi
 
-    docker compose -f "$compose_file" run --rm cc "$@"
+    # --service-ports: `compose run` ignores the service's ports: mapping without
+    # it. Only the ssh: feature declares ports today; a no-op for everyone else.
+    docker compose -f "$compose_file" run --rm --service-ports cc "$@"
 }
 
 # migrate-cc — upgrade a pre-modular project to the modular `modules:` engine.

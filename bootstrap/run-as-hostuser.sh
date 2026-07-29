@@ -17,6 +17,11 @@ git config --global --add safe.directory "$PROJECT_DIR"
 permission_mode_args=()
 [ -n "$CC_PERMISSION_MODE" ] && permission_mode_args=(--permission-mode "$CC_PERMISSION_MODE")
 
+# Tells the sandbox-context SessionStart hook (ssh: feature — see cc-config's
+# sync_sandbox_context_hook) that this session already gets /sandbox.md as a
+# real system prompt, so the hook must not inject it a second time as context.
+export CC_SANDBOX_PROMPTED=1
+
 clear
 claude --append-system-prompt "$(cat /sandbox.md)" "${permission_mode_args[@]}" "$@"
 clear

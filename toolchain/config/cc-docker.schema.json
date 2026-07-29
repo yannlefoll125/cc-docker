@@ -80,6 +80,28 @@
         "type": ["object", "string"]
       }
     },
+    "ssh": {
+      "type": "object",
+      "description": "Run an SSH server inside the sandbox so external tools (e.g. the Claude Code desktop app's SSH connections) can open sessions in it. sshd runs only while a `cc` session is up, accepts only `hostuser` with public-key auth against `authorized_keys`, and by default listens on the host loopback only. Host keys persist in the gitignored .cc-docker/ssh/ so the host identity is stable across runs.",
+      "additionalProperties": false,
+      "required": ["authorized_keys"],
+      "properties": {
+        "authorized_keys": {
+          "type": "string",
+          "description": "Host path to a file with the SSH public key(s) allowed to log in (openssh authorized_keys format; a single .pub file works). Mounted read-only into the container. Supports a leading ~ (host home) and absolute paths. Required — enabling SSH means saying explicitly who gets in."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Host port to publish the container's sshd on.",
+          "default": 2222
+        },
+        "bind": {
+          "type": "string",
+          "description": "Host interface to bind the published port to. The default keeps the sandbox reachable only from the host itself; set 0.0.0.0 to expose it to the network (think twice).",
+          "default": "127.0.0.1"
+        }
+      }
+    },
     "docker_socket": {
       "type": "boolean",
       "description": "Mount the host's /var/run/docker.sock into the container, granting root-equivalent access to the host Docker daemon (it can launch privileged containers with arbitrary host mounts). Disabled by default — only enable this for a project you trust with that level of host access.",

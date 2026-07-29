@@ -318,6 +318,7 @@ both, or neither, is a validation error).
 | `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
 | `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to keep using the mounted `~/.claude` OAuth login. See [API key auth](#api-key-auth-optional). |
 | `docker_socket` | boolean | no | If true, mounts the host's `/var/run/docker.sock` into the container and grants `hostuser` access to it. Grants **root-equivalent access to the host Docker daemon** — see [Why cc-dev is restricted to this repo](#why-cc-dev-is-restricted-to-this-repo) for what that means. Defaults to `false`. Note `base` ships no `docker` CLI, so a plain `modules:` project still needs one installed some other way to actually use the socket. |
+| `ssh` | object | no | Runs an SSH server inside the sandbox while a `cc` session is up, so external tools — notably the Claude Code desktop app's SSH connections — can open sessions in it. `authorized_keys` (required): host path to the public key(s) allowed in; `port` (default `2222`): host port to publish; `bind` (default `127.0.0.1`): host interface to bind — the default keeps it host-only. See [SSH access](#ssh-access-claude-code-desktop-app). Needs an image with the current entrypoint (`cc --build`, or a rebuilt `cc-dev`) — frozen `legacy/` images ignore it. |
 | `permission_mode` | string | no | Passed through to `claude --permission-mode` (`acceptEdits` \| `auto` \| `bypassPermissions` \| `manual` \| `dontAsk` \| `plan`). Omit to use claude's own default. Only takes effect with `modules:` — frozen `legacy/` (`image:`) entrypoints predate this option and ignore it. |
 
 Example:
@@ -408,6 +409,60 @@ This field is optional and off by default: omit it and nothing changes — auth 
 exactly as it does today, off the mounted `~/.claude` state. When set, it takes precedence for
 that run; `claude` records the one-time key approval in `~/.claude.json`, so later runs (with or
 without the key) won't need to re-approve it.
+
+### SSH access (Claude Code desktop app)
+
+The `ssh` block runs an OpenSSH server inside the sandbox for the lifetime of the `cc` session,
+so tools that speak SSH can work *inside* the sandbox. The motivating case is the
+[Claude Code desktop app](https://code.claude.com/docs/en/desktop)'s SSH connections: point it at
+the sandbox and it runs its sessions in there — same mounts, same `hostuser`, same isolation as
+the terminal `cc` session it rides along with.
+
+```yaml
+ssh:
+  authorized_keys: ~/.ssh/id_ed25519.pub  # who gets in (required)
+  # port: 2222                            # host port to publish (default)
+  # bind: 127.0.0.1                       # host-only by default; 0.0.0.0 exposes to the network
+```
+
+Rebuild once (`cc --build`) so the image picks up `openssh-server`, then `cc` as usual. On
+startup the container prints the connect line, e.g. `ssh -p 2222 hostuser@127.0.0.1`.
+
+In the desktop app: environment dropdown → **Add SSH connection** → host `hostuser@127.0.0.1`,
+port `2222`, and your private key. The app auto-installs its remote payload into the container
+home on first connect, and reuses the connection afterwards.
+
+How it's wired, and the security posture:
+
+- **Opt-in and session-scoped.** No `ssh:` block → sshd never starts (the daemon is baked into
+  `base` but dormant). It runs only while `cc` is up — exit the session and the sandbox is gone,
+  along with everything SSH could reach.
+- **Pubkey-only, one user, loopback-bound.** Password and keyboard-interactive auth are disabled,
+  root login is refused, and only `hostuser` — the same mapped identity the `cc` session uses — is
+  allowed, authenticated against the `authorized_keys` file you name (mounted read-only). The
+  published port binds to `127.0.0.1` unless you explicitly widen it.
+- **Stable host identity.** Host keys are generated on first run into the gitignored
+  `.cc-docker/ssh/` and reused, so your SSH client isn't retrained on a new fingerprint every run.
+- **Session parity.** SSH sessions get the image's toolchain `PATH`, `PROJECT_DIR`, and git
+  identity via `/etc/environment` (pam_env — applies to non-interactive sessions too). If
+  `anthropic_api_key_file` is set, the key is exported to SSH sessions as well (no wider than the
+  in-container secret file Docker already mounts world-readable).
+- **Sandbox prompt parity.** The terminal `cc` session gets `/sandbox.md` via
+  `--append-system-prompt` — a CLI flag with no settings/env equivalent, and the desktop app
+  launches its own auto-installed `claude`, so neither that flag nor a PATH shim reliably reaches
+  it. Instead, cc-config maintains a `SessionStart` hook in the project's overlay
+  `.claude/settings.json` (in-container only — on the host that file lives inertly in
+  `.cc-docker/.claude/`) that injects `/sandbox.md` as session *context* — the closest available
+  equivalent — for any session cc-docker didn't launch itself. Sessions that already got it as a
+  real system prompt set `CC_SANDBOX_PROMPTED`, which the hook checks, so nothing is injected
+  twice. For belt-and-braces, plain `ssh` shells also resolve `claude` to a `/opt/cc/bin` shim
+  that passes the flag (and the configured `permission_mode`) for real. The hook is added when
+  `ssh:` is enabled and removed when it's disabled; Claude Code may ask once to approve the
+  project-level hook. For project settings (and the hook) to load, open the sandbox session in
+  `$PROJECT_DIR`.
+
+Two sessions sharing one sandbox also share its limits: a second concurrent `cc` run in the same
+project will fail to bind the port — one sandbox per project at a time when `ssh:` is on.
 
 ### IntelliJ: schema-validated editing
 

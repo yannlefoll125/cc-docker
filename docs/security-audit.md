@@ -188,6 +188,16 @@ cc-docker itself" section.
   silently pulls a new `claude`.
 - **Robustness (not security):** `apply_display` with x11 and `XAUTHORITY` unset emits the
   malformed volume `:/home/hostuser/.Xauthority:ro` (`generate-compose.py:187`).
+- **`ssh:` widens the sandbox's attack surface from stdin to a network port** (added after
+  this audit; `bootstrap/cc-wrapper.sh`, `apply_ssh` in `generate-compose.py`). Mitigations
+  in place: opt-in, loopback-bound by default, pubkey-only against an explicit
+  `authorized_keys`, `AllowUsers hostuser`, root login refused, sshd lives only as long as
+  the `cc` session. Residual risks: `bind: 0.0.0.0` exposes the sandbox to the LAN with no
+  further gate than the key; any local process that can read the named private key gets a
+  shell in the sandbox (same blast radius as the `cc` terminal session itself); and when
+  `anthropic_api_key_file` is set the key is copied into the container's `/etc/environment`
+  for SSH sessions — no wider than the 0444 secret mount Docker already does, but a second
+  in-container copy to remember.
 
 ---
 
