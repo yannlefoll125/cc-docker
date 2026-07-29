@@ -5,6 +5,7 @@ for the config schema (also available machine-readable as cc-docker.schema.json)
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -19,6 +20,32 @@ OUTPUT_PATH = Path("/out/docker-compose.yml")
 # legacy mode, so legacy runs clear them.
 TAG_SIDECAR = Path("/out/assembled.tag")
 MODULES_SIDECAR = Path("/out/assembled.modules")
+SLUG_SIDECAR = Path("/out/claude-project-slug")
+
+CLAUDE_DIR = "/home/hostuser/.claude"
+
+# Directories under ~/.claude that the in-container agent legitimately writes at
+# runtime, but that must NOT be written back to the host or read across projects.
+# Each gets an empty tmpfs overlay on top of the read-only base mount: writable and
+# ephemeral (gone on exit), and — since the tmpfs is empty — it also masks whatever
+# the host has there. This is what closes the cross-project transcript / cache /
+# file-history leak (security-audit.md #2) while keeping the agent functional
+# (e.g. shell-snapshots is required by the Bash tool).
+CLAUDE_EPHEMERAL_DIRS = [
+    "projects",        # per-project transcripts of EVERY project — the main #2 leak
+    "shell-snapshots", # sourced by the host Bash tool (#1) AND written by ours
+    "sessions",
+    "session-env",
+    "file-history",    # snapshots of edited files, across projects
+    "cache",
+    "paste-cache",
+    "plans",
+    "backups",
+    "tasks",
+    "jobs",
+    "telemetry",
+    "daemon",
+]
 # Container-side view of the host's $PROJECT_DIR/.cc-docker/.claude bind source
 # (see the overlay mount below) — /out is that project's .cc-docker/, mounted r/w.
 OVERLAY_DIR = Path("/out/.claude")
@@ -231,9 +258,72 @@ def main():
 
     volumes, root_covered = build_mount_volumes(mounts_cfg, project_dir, readonly)
 
-    # Always-available mounts. ~ is left unexpanded so docker compose expands
-    # it against the invoking host user's home, matching today's behavior.
-    volumes.append({"type": "bind", "source": "~/.claude", "target": "/home/hostuser/.claude"})
+    # ~/.claude is the user-scope execution context of the *host* claude: hooks in
+    # settings.json, commands/, plugins/, get-api-key.sh, shell-snapshots the host
+    # Bash tool sources, … A compromised in-container agent that could write any of
+    # those would get durable host code execution (security-audit.md #1). So mount
+    # the whole tree READ-ONLY and allowlist writes back on top: a future top-level
+    # entry then defaults to non-writable (fail-closed) instead of silently
+    # host-executable. ~ is left unexpanded so docker compose expands it against the
+    # invoking host user's home, matching today's behavior.
+    slug = re.sub(r"[^a-zA-Z0-9]", "-", project_dir)
+    volumes.append(
+        {"type": "bind", "source": "~/.claude", "target": CLAUDE_DIR, "read_only": True}
+    )
+    for name in CLAUDE_EPHEMERAL_DIRS:
+        # mode 0o1777 (sticky, world-writable, serialized by yaml.dump as its
+        # decimal 1023): a docker tmpfs is root-owned root:root 0755 by default,
+        # but claude runs as the unprivileged hostuser via gosu and must be able to
+        # write these — e.g. shell-snapshots is required by the Bash tool.
+        volumes.append(
+            {"type": "tmpfs", "target": f"{CLAUDE_DIR}/{name}", "tmpfs": {"mode": 0o1777}}
+        )
+    # history.jsonl is every prompt from every project — mask it (empty, read-only).
+    volumes.append(
+        {
+            "type": "bind",
+            "source": "/dev/null",
+            "target": f"{CLAUDE_DIR}/history.jsonl",
+            "read_only": True,
+        }
+    )
+    # This project's own transcript/memory/todo dir MUST persist across sessions
+    # (it holds the memory system). Bind it read-write on top of the tmpfs'd
+    # projects/. The launcher pre-creates the host dir so it's owned by the user,
+    # not root-created by the bind (see init-cc.sh).
+    volumes.append(
+        {
+            "type": "bind",
+            "source": f"~/.claude/projects/{slug}",
+            "target": f"{CLAUDE_DIR}/projects/{slug}",
+            "read_only": False,
+        }
+    )
+    # OAuth credentials. With API-key-file auth the container doesn't need them, so
+    # mask the host token rather than expose it read-only through the base mount.
+    # Otherwise (OAuth login) the agent needs it and token refresh must persist.
+    if api_key_file:
+        volumes.append(
+            {
+                "type": "bind",
+                "source": "/dev/null",
+                "target": f"{CLAUDE_DIR}/.credentials.json",
+                "read_only": True,
+            }
+        )
+    else:
+        volumes.append(
+            {
+                "type": "bind",
+                "source": "~/.claude/.credentials.json",
+                "target": f"{CLAUDE_DIR}/.credentials.json",
+                "read_only": False,
+            }
+        )
+    # NOTE: ~/.claude.json is still mounted read-write and unmasked. It carries
+    # cross-project config (project list, MCP server configs which often hold
+    # tokens), so it remains a residual read leak (security-audit.md #2/#3, the
+    # deferred half). Splitting it needs a filtered view and is tracked separately.
     volumes.append(
         {
             "type": "bind",
@@ -311,6 +401,12 @@ def main():
 
     OUTPUT_PATH.write_text(HEADER + yaml.dump(compose, sort_keys=False, default_flow_style=False))
 
+    # Sidecar: the ~/.claude/projects/<slug> host dir this compose binds read-write
+    # must exist and be user-owned *before* `docker compose run` (else docker
+    # root-creates it and the agent can't write its transcripts). cc-config can't
+    # see the host ~/.claude, so it hands the slug to the launcher to mkdir.
+    SLUG_SIDECAR.write_text(slug + "\n")
+
     # cc-config runs as root, so anything it writes under /out is root-owned on
     # the host. Chown it all back to the invoking host user (the `cc` launcher
     # passes their ids as HOST_UID/HOST_GID) so it stays editable without sudo.
@@ -319,6 +415,7 @@ def main():
     if host_uid and host_gid:
         uid, gid = int(host_uid), int(host_gid)
         os.chown(OUTPUT_PATH, uid, gid)
+        os.chown(SLUG_SIDECAR, uid, gid)
         os.chown(OVERLAY_DIR, uid, gid)
         if overlay_settings.exists():
             os.chown(overlay_settings, uid, gid)

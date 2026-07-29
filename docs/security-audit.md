@@ -46,6 +46,21 @@ no misconfiguration.
 `plugins/`, `hooks/`, `shell-snapshots/`. Only `projects/<this-project>`, `todos/`,
 `statsig/`, `.credentials.json` genuinely need write access.
 
+**Status (2026-07-29 — fixed):** implemented as an *allowlist* rather than the denylist
+sketched above, which fails safer as Claude Code grows new top-level entries (the live
+`~/.claude` has ~30, not the 5 named here). `generate-compose.py` now mounts the whole
+tree **read-only** and layers writes back on top: empty `tmpfs` overlays for the dirs the
+in-container agent must write but that must not persist or leak (`shell-snapshots`,
+`sessions`, `session-env`, `file-history`, `cache`, `paste-cache`, `plans`, `backups`,
+`tasks`, `jobs`, `telemetry`, `daemon`, and `projects`), and a read-write bind for
+`projects/<this-slug>` alone (pre-created user-owned by `init-cc.sh` so the bind isn't
+root-created). tmpfs overlays carry `mode: 01777` because a default docker tmpfs is
+root-owned `0755` and the agent runs as the unprivileged `hostuser`. `.credentials.json`
+is masked when API-key-file auth is configured (the container doesn't need the host OAuth
+token) and read-write bound otherwise. Verified end-to-end: `settings.json` is
+non-writable, the Bash tool works (shell-snapshots), and transcripts persist. There is no
+top-level `todos/` or `statsig/` in current Claude Code — the audit's list was stale.
+
 ### 2. Every other project's transcripts are readable
 
 `README.md:17` states: *"A prompt injection inside project A cannot exfiltrate code from
@@ -61,6 +76,20 @@ Network egress is unrestricted by design (`README.md:21`), so exfiltration is on
 **Fix:** mask `projects/`, `history.jsonl`, and `.claude.json`'s cross-project fields;
 bind only `projects/<current-slug>` through. This is the highest-value fix relative to
 the project's stated purpose.
+
+**Status (2026-07-29 — partially fixed):** `projects/` is masked (empty tmpfs) with only
+`projects/<current-slug>` bound through, and `history.jsonl` is masked with a read-only
+`/dev/null` bind. The read-only base mount from #1 also incidentally closes the
+`file-history/`, `sessions/`, and cache leaks (all tmpfs-masked). **Deferred:
+`~/.claude.json`.** It is still bind-mounted read-write and unmasked, so its full project
+list and per-project MCP server configs (which commonly hold tokens) remain readable and
+writable from inside any container. It can't be masked with a bind the way a directory
+can — it's a single monolithic JSON file that Claude Code needs writable to function, so
+isolating it requires generating a filtered per-project view (only the current project's
+entry plus safe top-level fields) and reconciling writes back out. That's more machinery
+than the two clean masks above and was split off deliberately to avoid holding them up;
+it remains an open item. The residual is flagged inline at the `.claude.json` mount in
+`generate-compose.py`.
 
 ### 3. The agent can rewrite the config that defines the *next* session's sandbox
 
@@ -193,9 +222,9 @@ cc-docker itself" section.
 
 ## Suggested order of work
 
-1. Ro-bind the executable parts of `~/.claude` (#1) and mask cross-project `projects/` /
-   `history.jsonl` (#2) — these two are the difference between the README's promise and
-   reality.
+1. ~~Ro-bind the executable parts of `~/.claude` (#1) and mask cross-project `projects/` /
+   `history.jsonl` (#2)~~ — **done 2026-07-29** (allowlist: read-only base + tmpfs/rw
+   overlays; see #1/#2 status notes). Residual: `~/.claude.json` isolation still open.
 2. Ro-bind `.cc-docker/cc-docker.yml` + `docker-compose.yml` always (#3), and constrain
    `mounts[].path` to the project (#4).
 3. Flip `display` to `disabled` by default, or switch to untrusted X cookies (#5).

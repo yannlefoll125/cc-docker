@@ -11,9 +11,11 @@ Claude Code is a capable agent with broad filesystem and shell access. Run direc
 Running Claude inside a per-project container fixes that. The container only sees:
 
 - The current project directory (at its host path)
-- `/home/hostuser/.claude` and `/home/hostuser/.claude.json` — your Claude auth/settings
+- Your Claude auth and settings: `/home/hostuser/.claude` — mounted **read-only**, with other projects' transcripts, prompt history, and caches masked (only the current project's transcript dir is bound read-write) — plus `/home/hostuser/.claude.json`
 
-It does **not** see other repos on your machine, your home directory, SSH keys, or any sibling project. A prompt injection inside project A cannot exfiltrate code from project B, because project B isn't mounted.
+It does **not** see other repos on your machine, your home directory, SSH keys, or any sibling project's working tree. A prompt injection inside project A cannot read project B's code, because project B isn't mounted — and other projects' Claude transcripts and prompt history under `~/.claude` are masked as well, so they can't be exfiltrated either.
+
+> One residual gap: `~/.claude.json` is still exposed read-write, so its project list and per-project MCP server configs (which may hold tokens) remain visible cross-project. Isolating it is tracked in `docs/security-audit.md` (finding #2).
 
 What this does **not** do:
 
