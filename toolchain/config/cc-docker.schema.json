@@ -61,7 +61,8 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "Path to mount, relative to the project root. Use \".\" to mount the whole project root."
+            "description": "Path to mount, relative to the project root. Use \".\" to mount the whole project root. Must stay inside the project: absolute paths and \"..\" segments are rejected (they would let a mount escape onto the host — security-audit.md #4).",
+            "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"
           },
           "exclude": {
             "type": "array",

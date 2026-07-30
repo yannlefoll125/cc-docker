@@ -116,17 +116,41 @@ def build_mount_volumes(mounts_cfg, project_dir, readonly):
     for entry in mounts_cfg:
         rel_path = entry["path"]
 
-        container_path = (CONTAINER_PROJECT_ROOT / rel_path).resolve() if rel_path != "." \
-            else CONTAINER_PROJECT_ROOT
+        # Constrain the mount to the project. `path` flows into both a container
+        # path (CONTAINER_PROJECT_ROOT / rel_path) and a host path
+        # (os.path.join(project_dir, rel_path)); on an absolute or `..`-bearing
+        # value both the `/` operator and os.path.join drop the project prefix and
+        # escape — e.g. `/etc` or `../../..` would bind the host's /etc or / at its
+        # own path, read-write (security-audit.md #4). Reject anything that doesn't
+        # stay inside the project. The schema also blocks these (a `path` pattern),
+        # so this is defense in depth for a hand-edited or schema-bypassed config.
+        if os.path.isabs(rel_path):
+            die(f"mount path '{rel_path}' must be relative to the project root")
+
+        if rel_path == ".":
+            container_path = CONTAINER_PROJECT_ROOT
+        else:
+            container_path = (CONTAINER_PROJECT_ROOT / rel_path).resolve()
+            # .resolve() follows symlinks; since /project mirrors the host project
+            # tree, this also catches a repo symlink that points outside the project.
+            if not container_path.is_relative_to(CONTAINER_PROJECT_ROOT):
+                die(f"mount path '{rel_path}' escapes the project root")
         if not container_path.exists():
             die(f"mount path '{rel_path}' does not exist in the project")
 
         host_path = project_dir if rel_path == "." else os.path.normpath(
             os.path.join(project_dir, rel_path)
         )
+        # Defense in depth: the host path that is actually bind-mounted must also
+        # stay within the project (guards the string-join path independently of the
+        # container-side resolve check above).
+        host_path_norm = os.path.normpath(str(host_path))
+        if host_path_norm != project_dir_norm \
+                and not host_path_norm.startswith(project_dir_norm + os.sep):
+            die(f"mount path '{rel_path}' escapes the project root")
         host_path = Path(host_path)
 
-        if os.path.normpath(str(host_path)) == project_dir_norm:
+        if host_path_norm == project_dir_norm:
             root_covered = True
 
         volumes.append(
@@ -348,13 +372,25 @@ def main():
             "read_only": False,
         }
     )
-    if not root_covered:
-        cc_docker_yml_path = str(Path(project_dir) / ".cc-docker" / "cc-docker.yml")
+    # The config that defines the NEXT session's sandbox lives in .cc-docker/
+    # (cc-docker.yml, the generated docker-compose.yml, and the launcher sidecars).
+    # It sits at the project root, so the default `path: .` mount makes the whole
+    # directory read-write — a compromised agent could rewrite cc-docker.yml to
+    # pre-authorize its own escape on the next run (extra_mounts, docker_socket,
+    # permission_mode: bypassPermissions, env injection; security-audit.md #3).
+    # Layer a read-only bind over it (a ro bind on an rw parent is a VFS overlay,
+    # not a write to the parent). Only needed when the project root is mounted —
+    # otherwise .cc-docker isn't in the container at all. The .claude overlay below
+    # is unaffected: it binds host .cc-docker/.claude to a DIFFERENT container
+    # target ($PROJECT_DIR/.claude), and the generated files are written host-side
+    # by cc-config before this container ever starts, so read-only here is correct.
+    if root_covered:
+        cc_docker_dir = str(Path(project_dir) / ".cc-docker")
         volumes.append(
             {
                 "type": "bind",
-                "source": cc_docker_yml_path,
-                "target": cc_docker_yml_path,
+                "source": cc_docker_dir,
+                "target": cc_docker_dir,
                 "read_only": True,
             }
         )

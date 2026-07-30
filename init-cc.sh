@@ -119,10 +119,12 @@ EOF
     echo "  cc"
 }
 
-# cc — launcher: regenerates docker-compose.yml from cc-docker.yml (if present)
-# and runs it. Works from any subdirectory of the project by walking up to find
-# .cc-docker/. Backward compatible: a project with only a hand-written
-# docker-compose.yml (no cc-docker.yml) runs directly, no regeneration.
+# cc — launcher: regenerates docker-compose.yml from cc-docker.yml and runs it.
+# Works from any subdirectory of the project by walking up to find .cc-docker/.
+# A cc-docker.yml is required: legacy compose mode (a hand-written
+# docker-compose.yml with no cc-docker.yml) is no longer run — it left the compose
+# that defines the sandbox writable from inside the container (security-audit.md
+# #3). `migrate-cc` converts such a project to a cc-docker.yml.
 #
 # By default cc does NOT (re)build the assembled image — it just runs whatever is
 # already built (fast path). Pass `--build` (or set CC_BUILD=1) to assemble and
@@ -246,8 +248,21 @@ cc() {
                 return 1
             fi
         fi
-    elif [[ ! -f "$compose_file" ]]; then
-        echo "Error: no cc-docker.yml or docker-compose.yml found in $target_dir." >&2
+    elif [[ -f "$compose_file" ]]; then
+        # Legacy compose mode (a hand-written docker-compose.yml with no
+        # cc-docker.yml) is no longer run: that file lives in the rw project mount,
+        # so a compromised agent could rewrite the very compose that defines the
+        # next session's sandbox — privileged: true, user: root, extra host mounts —
+        # with no generator in the loop to constrain it (security-audit.md #3).
+        # migrate-cc converts it to a cc-docker.yml, which the generator then hardens.
+        echo "Error: this project has a hand-written .cc-docker/docker-compose.yml but no" >&2
+        echo "cc-docker.yml. Legacy compose mode has been retired for security reasons" >&2
+        echo "(the compose file is writable from inside the container and defines the next" >&2
+        echo "session's sandbox — see docs/security-audit.md #3)." >&2
+        echo "Run 'migrate-cc' to convert it to a cc-docker.yml, then 'cc --build'." >&2
+        return 1
+    else
+        echo "Error: no cc-docker.yml found in $target_dir." >&2
         echo "Run init-cc to set one up." >&2
         return 1
     fi

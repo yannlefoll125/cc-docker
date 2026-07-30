@@ -97,9 +97,15 @@ Defined by `init-cc.sh` alongside `init-cc`. On each invocation it:
    `CC_BUILD=1`) to build first: `cc` runs `cc-assemble` (→ `assembled.Dockerfile`),
    builds `base` + the selected stacks via `build.sh`, and builds the per-project final
    image (under a lock). All are plain `docker build`s, so unchanged pieces are cache no-ops.
-4. Otherwise, if a hand-written `.cc-docker/docker-compose.yml` exists, uses it directly — no
-   regeneration. This is what keeps existing raw-compose projects working unchanged.
-5. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
+4. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
+
+A `cc-docker.yml` is required. A project with only a hand-written
+`.cc-docker/docker-compose.yml` and no `cc-docker.yml` (the old "raw compose" setup) is **no
+longer run**: that file lives in the read-write project mount, so a compromised agent could
+rewrite the compose that defines the next session's sandbox (`privileged`, `user: root`,
+extra host mounts) with no generator in the loop to constrain it
+(`docs/security-audit.md` #3). `cc` prints an error pointing at `migrate-cc`, which converts
+the compose to a `cc-docker.yml` (the generator then hardens it).
 
 So with a native `cc-docker.yml`, editing it and re-running `cc` always picks up config
 changes (the compose file regenerates every time). Changes to the *image* — editing a
@@ -113,7 +119,7 @@ that only rebuilds what changed, since the toolchains stay cached.
 ├── .cc-docker-dev                # committed marker; see below
 ├── .cc-docker/                   # per-project, gitignored: config + generated artifacts
 │   ├── cc-docker.yml             # native config (source of truth)
-│   ├── docker-compose.yml        # generated from it (or hand-written, raw)
+│   ├── docker-compose.yml        # generated from cc-docker.yml (never hand-edit)
 │   ├── assembled.Dockerfile      # modular: generated recipe for the final image
 │   ├── assembled.tag             # modular: final image tag (e.g. cc/node-zulu)
 │   └── assembled.modules         # modular: selected module names (for the launcher)
@@ -288,11 +294,10 @@ compose file's volume mounts are the key pieces:
 
 ## Configuring cc-docker (`cc-docker.yml`)
 
-`.cc-docker/docker-compose.yml` is either hand-written (the *raw* option in `init-cc`) or a
-generated, disposable artifact regenerated on every `cc` invocation from a shorter declarative
-config, `.cc-docker/cc-docker.yml` (the *native* option, preselected). The generation is done by
+`.cc-docker/docker-compose.yml` is a generated, disposable artifact, regenerated on every `cc`
+invocation from a shorter declarative config, `.cc-docker/cc-docker.yml`. The generation is done by
 `cc-config` (`toolchain/config/`) — a small tool that reads `cc-docker.yml` and writes
-`docker-compose.yml`. When native, don't hand-edit `docker-compose.yml` — edit `cc-docker.yml`
+`docker-compose.yml`. Don't hand-edit `docker-compose.yml` — edit `cc-docker.yml`
 instead, `cc` regenerates it for you.
 
 **Tracking:** the whole `.cc-docker/` directory is gitignored. Using cc-docker is currently
@@ -564,7 +569,9 @@ legacy shapes:
 - **A hand-written `docker-compose.yml` with no `cc-docker.yml`** (the oldest raw setup) —
   reverse-engineers a `cc-docker.yml` from it (image, git identity from `.env` or the
   `environment:` block, `docker_socket`, `anthropic_api_key_file`), and lets `cc` regenerate the
-  compose file on its next run.
+  compose file on its next run. This migration is now **required** for such projects: `cc` no
+  longer runs a bare hand-written compose (it left the sandbox-defining compose file writable
+  from inside the container — `docs/security-audit.md` #3).
 
 Legacy image → module mapping:
 
@@ -601,8 +608,8 @@ Claude Code permissions are configured in `.claude/settings.local.json`. Edit th
 
 ### Git identity (optional)
 
-By default, the container has no git user identity. With a native `cc-docker.yml` (`init-cc`'s
-default), set it via the `git:` block:
+By default, the container has no git user identity. Set it in `cc-docker.yml` via the `git:`
+block:
 
 ```yaml
 git:
@@ -610,15 +617,7 @@ git:
   email: you@example.com
 ```
 
-With a raw `docker-compose.yml` (`init-cc`'s alternative choice), set it in `.cc-docker/.env`
-instead:
-
-```ini
-GIT_USER_NAME=Your Name
-GIT_USER_EMAIL=you@example.com
-```
-
-Either way `.cc-docker/` is gitignored (see
+`.cc-docker/` is gitignored (see
 [Tracking](#configuring-cc-docker-cc-dockeryml)), so this is per-developer and never committed.
 The values are applied via `git config --global` at container startup
 (`bootstrap/run-as-hostuser.sh`).

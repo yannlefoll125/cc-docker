@@ -117,6 +117,24 @@ writable → `privileged: true`, `user: root`, `pid: host`.
 (a ro bind on top of an rw parent works), or auto-exclude `.cc-docker/` from the project
 mount.
 
+**Status (2026-07-30 — fixed):** `generate-compose.py` now layers a **read-only bind over
+the whole `.cc-docker/`** directory (superseding the old inverted `if not root_covered`
+single-file bind, which protected `cc-docker.yml` only in the one case where it wasn't
+writable anyway). This covers `cc-docker.yml`, the generated `docker-compose.yml`, and the
+launcher sidecars (`assembled.tag`, `claude-project-slug`) in one bind — readable but not
+writable from inside the container. It's added only when the project root is mounted
+(`root_covered`); with a subdir-only mount `.cc-docker/` isn't in the container at all. The
+`.claude` overlay is unaffected — it binds `.cc-docker/.claude` to a *different* container
+target (`$PROJECT_DIR/.claude`), and the generated files are written host-side by cc-config
+before the cc container starts, so read-only there breaks nothing. Verified: the ro bind
+appears for `path: .`, is absent for a subdir-only mount, and the overlay stays read-write.
+**Legacy compose mode retired:** the more-direct legacy vector (a hand-written
+`docker-compose.yml` with no `cc-docker.yml`, run verbatim → `privileged`, `user: root`,
+`pid: host`) had no generator in the loop to harden. Rather than parse/rewrite user compose
+files, the `cc` launcher now refuses to run a bare compose and directs to `migrate-cc`
+(which converts it to a `cc-docker.yml` the generator then hardens). `migrate-cc`'s
+compose→`cc-docker.yml` reconstruction is retained as the off-ramp.
+
 ### 4. `mounts[].path` is not constrained to the project
 
 `generate-compose.py:92-100` builds the host path with
@@ -137,6 +155,17 @@ whole-filesystem mount with no visible warning.
 
 **Fix:** reject absolute paths; require the normalized host path to stay under
 `project_dir` and the resolved container path under `/project`.
+
+**Status (2026-07-30 — fixed):** `build_mount_volumes` now rejects (`die`) any `path` that
+is absolute or whose resolved container path escapes `/project`. The container-side check
+uses `(/project / path).resolve().is_relative_to(/project)`, which — because `/project`
+mirrors the host tree — also catches a repo symlink pointing outside the project. A second,
+independent check requires the normalized host bind path to stay under `project_dir`
+(guards the `os.path.join` string path). Belt-and-suspenders, the schema now constrains
+`mounts[].path` with `pattern: ^(?!/)(?!.*(^|/)\.\.(/|$)).+$` (rejects absolute paths and
+`..` segments while still allowing dotted filenames like `.env` or `..data`), so a bad
+config fails at validation with a located error before reaching the generator. Verified:
+`/etc` and `../../..` are rejected; `.`, `src`, `a/b`, `.env` pass.
 
 ---
 
@@ -225,8 +254,10 @@ cc-docker itself" section.
 1. ~~Ro-bind the executable parts of `~/.claude` (#1) and mask cross-project `projects/` /
    `history.jsonl` (#2)~~ — **done 2026-07-29** (allowlist: read-only base + tmpfs/rw
    overlays; see #1/#2 status notes). Residual: `~/.claude.json` isolation still open.
-2. Ro-bind `.cc-docker/cc-docker.yml` + `docker-compose.yml` always (#3), and constrain
-   `mounts[].path` to the project (#4).
+2. ~~Ro-bind `.cc-docker/cc-docker.yml` + `docker-compose.yml` always (#3), and constrain
+   `mounts[].path` to the project (#4)~~ — **done 2026-07-30** (whole-`.cc-docker/` ro bind +
+   legacy compose mode retired; `mounts[].path` containment check + schema pattern; see
+   #3/#4 status notes).
 3. Flip `display` to `disabled` by default, or switch to untrusted X cookies (#5).
 4. Mask `.git/hooks` + `.git/config` (#7), fix the `readonly` gaps (#6), add
    `no-new-privileges` / `cap_drop`.
