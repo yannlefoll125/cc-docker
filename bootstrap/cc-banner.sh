@@ -23,9 +23,12 @@ json_str() {
     | head -1 | sed -E 's/^.*:[[:space:]]*"(.*)"$/\1/'
 }
 
+# A lone "$SEP" entry becomes a horizontal divider inside the box.
+SEP=$'\x01'
+
 lines=()
 lines+=("cc-docker sandbox — ${PROJECT_DIR##*/}")
-lines+=("────────────────────────────────────────────────────────────")
+lines+=("$SEP")
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -r /run/secrets/anthropic_api_key ]; then
   # API-key auth: identity/org aren't available offline (they belong to the key).
@@ -54,14 +57,53 @@ else
   lines+=("$(printf '%-12s: %s' 'Auth' "Claude ${plan:-subscription} plan (OAuth)")")
 fi
 
-lines+=("────────────────────────────────────────────────────────────")
+lines+=("$SEP")
 lines+=("Isolated Docker container. The host filesystem, your host")
 lines+=("credentials, and other projects are NOT visible. Writable: the")
 lines+=("mounts declared in cc-docker.yml plus ~/.claude (a per-project")
 lines+=("volume); everything else is read-only or absent.")
 
+# Render the lines inside a box: 1-space interior padding on each side, a blank
+# line of margin above and below. The box is sized to the widest content line.
+#
+# Content may contain multibyte glyphs (e.g. the "—" in the header), so we can't
+# use ${#s} or printf field widths — those count bytes and would misalign the
+# right border. Display width is computed locale-independently as the number of
+# UTF-8 lead bytes (every byte that is NOT a 0x80-0xBF continuation byte begins
+# one glyph); all glyphs here occupy exactly one column.
+dispwidth() {
+  local stripped
+  stripped="$(LC_ALL=C printf '%s' "$1" | LC_ALL=C tr -d '\200-\277')"
+  printf '%s' "${#stripped}"
+}
+# A run of $1 spaces, for right-padding content lines.
+spaces() { LC_ALL=C printf '%*s' "$1" ''; }
+
+width=0
+for l in "${lines[@]}"; do
+  [ "$l" = "$SEP" ] && continue
+  w="$(dispwidth "$l")"
+  [ "$w" -gt "$width" ] && width="$w"
+done
+
+# The horizontal rule: (width + 2) copies of the "─" glyph.
+bar=; n=$((width + 2)); while [ "$n" -gt 0 ]; do bar="$bar─"; n=$((n - 1)); done
+
+out=()
+out+=("")                       # top margin
+out+=("┌${bar}┐")
+for l in "${lines[@]}"; do
+  if [ "$l" = "$SEP" ]; then
+    out+=("├${bar}┤")
+  else
+    out+=("│ ${l}$(spaces $((width - $(dispwidth "$l")))) │")
+  fi
+done
+out+=("└${bar}┘")
+out+=("")                       # bottom margin
+
 # Join the lines with real newlines, then JSON-escape for the systemMessage string.
-msg="$(printf '%s\n' "${lines[@]}")"
+msg="$(printf '%s\n' "${out[@]}")"
 esc="$(printf '%s' "$msg" \
   | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
   | awk 'BEGIN{ORS=""} {print sep $0; sep="\\n"}')"
