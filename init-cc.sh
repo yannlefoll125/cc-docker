@@ -267,16 +267,11 @@ cc() {
         return 1
     fi
 
-    # The compose binds ~/.claude/projects/<slug> read-write (the only part of the
-    # otherwise read-only ~/.claude that persists — it holds this project's
-    # transcripts/memory). Pre-create it here, in the host shell, so it's owned by
-    # the user; a bind against a missing source would be root-created and unwritable.
-    # cc-config emits the slug (it can't see the host ~/.claude to mkdir it itself).
-    if [[ -f "$target_dir/claude-project-slug" ]]; then
-        local claude_slug; claude_slug="$(cat "$target_dir/claude-project-slug")"
-        [[ -n "$claude_slug" ]] && mkdir -p "$HOME/.claude/projects/$claude_slug"
-    fi
-
+    # ~/.claude is a per-project Docker named volume (cc-claude-<slug>), created and
+    # persisted by Docker — nothing to pre-create on the host. It holds this
+    # project's config, credentials, transcripts, and memory, isolated from the host
+    # and from other projects. cc-wrapper.sh chowns the mountpoint to the host user
+    # on start.
     docker compose -f "$compose_file" run --rm cc "$@"
 }
 
@@ -543,10 +538,10 @@ migrate-cc() {
         local et="${tgt//\$\{PWD\}/$project_dir}"; et="${et//\$PWD/$project_dir}"
 
         # Mounts cc-config re-adds on its own — drop so they're not duplicated.
-        # The ~/.claude base plus every overlay it now layers on top (the tmpfs
-        # ephemerals, the history.jsonl / .credentials.json masks, the
-        # projects/<slug> rw bind) all live under /home/hostuser/.claude — match by
-        # prefix so none of them survive into extra_mounts.
+        # cc-config now mounts ~/.claude as a per-project Docker volume (and points
+        # CLAUDE_CONFIG_DIR at it, so .claude.json lives inside it too). Any legacy
+        # host bind under /home/hostuser/.claude* would conflict with that volume —
+        # match by prefix so none of them survive into extra_mounts.
         case "$et" in
             /home/hostuser/.claude|/home/hostuser/.claude/*|/home/hostuser/.claude.json) continue ;;
             "$root_ref/.claude"|*/.cc-docker/cc-docker.yml) continue ;;

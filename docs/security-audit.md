@@ -61,6 +61,20 @@ token) and read-write bound otherwise. Verified end-to-end: `settings.json` is
 non-writable, the Bash tool works (shell-snapshots), and transcripts persist. There is no
 top-level `todos/` or `statsig/` in current Claude Code — the audit's list was stale.
 
+**Status (2026-07-30 — superseded by volume redesign):** the read-only-base + tmpfs-allowlist
+apparatus above has been replaced entirely. `~/.claude` is now a **dedicated per-project Docker
+named volume** (`cc-claude-<slug>`), decoupled from the host, with `CLAUDE_CONFIG_DIR` pointed at
+it so *all* Claude Code state (config, `.credentials.json`, transcripts/memory, and `.claude.json`)
+lives inside that one volume. This removes #1 **structurally** rather than by masking: the volume
+is never read by the *host* `claude`, so a hook / command / `settings.json` a compromised agent
+writes only ever executes inside the sandbox it already controls. The tree is therefore mounted
+fully read-write. New residual: **intra-project persistence** — the volume persists across runs, so
+an agent can plant a hook that fires on *this* project's next run. That never crosses out of the
+project's own sandbox (which the agent already controls during a run), and is strictly safer than
+the host-executed `.git/hooks`/`.git/config` vectors in #7. See
+`docs/ideas/sandbox-shared-config-elevation.md` for the design and the deliberate re-introduction of
+shared config as a later, opt-in step.
+
 ### 2. Every other project's transcripts are readable
 
 `README.md:17` states: *"A prompt injection inside project A cannot exfiltrate code from
@@ -90,6 +104,13 @@ entry plus safe top-level fields) and reconciling writes back out. That's more m
 than the two clean masks above and was split off deliberately to avoid holding them up;
 it remains an open item. The residual is flagged inline at the `.claude.json` mount in
 `generate-compose.py`.
+
+**Status (2026-07-30 — closed by volume redesign):** the deferred `~/.claude.json` residual is now
+closed. With the per-project config volume (see #1 status) and `CLAUDE_CONFIG_DIR` pointed at it,
+`.claude.json` lives *inside* the volume, so its project list and per-project MCP configs are
+per-project and never carry another project's data — no host bind, no filtered-view machinery. The
+whole of #2 (transcripts, history, caches, and `.claude.json`) is now handled by construction: the
+volume is per-project and never touches the host.
 
 ### 3. The agent can rewrite the config that defines the *next* session's sandbox
 
@@ -268,8 +289,10 @@ cc-docker itself" section.
 ## Suggested order of work
 
 1. ~~Ro-bind the executable parts of `~/.claude` (#1) and mask cross-project `projects/` /
-   `history.jsonl` (#2)~~ — **done 2026-07-29** (allowlist: read-only base + tmpfs/rw
-   overlays; see #1/#2 status notes). Residual: `~/.claude.json` isolation still open.
+   `history.jsonl` (#2)~~ — **done 2026-07-29** (allowlist: read-only base + tmpfs/rw overlays),
+   then **superseded 2026-07-30** by moving `~/.claude` to a dedicated per-project Docker volume
+   (`CLAUDE_CONFIG_DIR`), which closes #1 and #2 in full — including the `~/.claude.json` residual —
+   structurally. See #1/#2 status notes.
 2. ~~Ro-bind `.cc-docker/cc-docker.yml` + `docker-compose.yml` always (#3), and constrain
    `mounts[].path` to the project (#4)~~ — **done 2026-07-30** (whole-`.cc-docker/` ro bind +
    legacy compose mode retired; `mounts[].path` containment check + schema pattern; see

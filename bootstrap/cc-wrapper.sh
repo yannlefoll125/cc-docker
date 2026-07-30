@@ -7,37 +7,37 @@ fi
 
 echo "PROJECT_DIR=$PROJECT_DIR"
 
-HOST_UID=$(stat -c "%u" "$PROJECT_DIR")
-HOST_GID=$(stat -c "%g" "$PROJECT_DIR")
-
-# PROJECT_DIR may not be bind-mounted itself (e.g. only subdirectories are, to
-# avoid exposing the whole project). In that case Docker auto-creates it inside
-# the container owned by root, so stat reports UID 0. Fall back to the
-# always-mounted, host-owned .claude config mounts to recover the real host
-# UID/GID.
-if [ -z "$HOST_UID" ] || [ "$HOST_UID" = 0 ]; then
-  for ref in /home/hostuser/.claude /home/hostuser/.claude.json; do
-    [ -e "$ref" ] || continue
-    ref_uid=$(stat -c "%u" "$ref")
-    ref_gid=$(stat -c "%g" "$ref")
-    if [ -n "$ref_uid" ] && [ "$ref_uid" != 0 ]; then
-      HOST_UID=$ref_uid
-      HOST_GID=$ref_gid
-      echo "PROJECT_DIR is root-owned (not bind-mounted); using host UID/GID $HOST_UID:$HOST_GID from $ref"
-      break
-    fi
-  done
+# Determine the host user's UID/GID so we can run as them (files created in bind
+# mounts must be host-owned). The `cc` launcher forwards these as CC_HOST_UID/GID
+# (generate-compose.py); prefer them — they're independent of any mount. This
+# matters now that ~/.claude is a Docker volume (root-owned on first mount), so
+# the old "stat the .claude bind to recover the host UID" trick no longer works.
+# Fall back to stat-ing PROJECT_DIR for the case where it's bind-mounted and
+# someone runs `docker compose` by hand without CC_HOST_UID.
+if [ -n "$CC_HOST_UID" ] && [ "$CC_HOST_UID" != 0 ]; then
+  HOST_UID=$CC_HOST_UID
+  HOST_GID=$CC_HOST_GID
+else
+  HOST_UID=$(stat -c "%u" "$PROJECT_DIR")
+  HOST_GID=$(stat -c "%g" "$PROJECT_DIR")
 fi
 
 if [ -z "$HOST_UID" ] || [ "$HOST_UID" = 0 ]; then
-  echo "ERROR: could not determine a non-root host UID from PROJECT_DIR or the .claude mounts." >&2
-  echo "       Ensure ~/.claude is bind-mounted, or bind-mount the project directory itself." >&2
+  echo "ERROR: could not determine a non-root host UID." >&2
+  echo "       Run via the 'cc' launcher (it forwards CC_HOST_UID/CC_HOST_GID)," >&2
+  echo "       or bind-mount the project directory itself." >&2
   exit 1
 fi
 
 getent group "$HOST_GID" >/dev/null || groupadd -g "$HOST_GID" hostgroup
 id -u hostuser >/dev/null 2>&1 || useradd -u "$HOST_UID" -g "$HOST_GID" -m hostuser
 chown "$HOST_UID:$HOST_GID" /home/hostuser
+
+# ~/.claude is a per-project Docker volume, root-owned root:root on first mount.
+# Hand its mountpoint to hostuser so claude can write its config/transcripts.
+# Non-recursive: on later runs the contents are already hostuser-owned (the volume
+# persists), and hostuser creates everything beneath the mountpoint itself.
+chown "$HOST_UID:$HOST_GID" /home/hostuser/.claude
 
 # Give hostuser ownership of its cwd. Deliberately NON-recursive: a recursive
 # chown would descend into bind-mounted subdirectories and rewrite ownership

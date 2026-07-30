@@ -20,32 +20,9 @@ OUTPUT_PATH = Path("/out/docker-compose.yml")
 # legacy mode, so legacy runs clear them.
 TAG_SIDECAR = Path("/out/assembled.tag")
 MODULES_SIDECAR = Path("/out/assembled.modules")
-SLUG_SIDECAR = Path("/out/claude-project-slug")
 
 CLAUDE_DIR = "/home/hostuser/.claude"
 
-# Directories under ~/.claude that the in-container agent legitimately writes at
-# runtime, but that must NOT be written back to the host or read across projects.
-# Each gets an empty tmpfs overlay on top of the read-only base mount: writable and
-# ephemeral (gone on exit), and — since the tmpfs is empty — it also masks whatever
-# the host has there. This is what closes the cross-project transcript / cache /
-# file-history leak (security-audit.md #2) while keeping the agent functional
-# (e.g. shell-snapshots is required by the Bash tool).
-CLAUDE_EPHEMERAL_DIRS = [
-    "projects",        # per-project transcripts of EVERY project — the main #2 leak
-    "shell-snapshots", # sourced by the host Bash tool (#1) AND written by ours
-    "sessions",
-    "session-env",
-    "file-history",    # snapshots of edited files, across projects
-    "cache",
-    "paste-cache",
-    "plans",
-    "backups",
-    "tasks",
-    "jobs",
-    "telemetry",
-    "daemon",
-]
 # Container-side view of the host's $PROJECT_DIR/.cc-docker/.claude bind source
 # (see the overlay mount below) — /out is that project's .cc-docker/, mounted r/w.
 OVERLAY_DIR = Path("/out/.claude")
@@ -318,79 +295,40 @@ def main():
 
     volumes, root_covered = build_mount_volumes(mounts_cfg, project_dir, readonly)
 
-    # ~/.claude is the user-scope execution context of the *host* claude: hooks in
-    # settings.json, commands/, plugins/, get-api-key.sh, shell-snapshots the host
-    # Bash tool sources, … A compromised in-container agent that could write any of
-    # those would get durable host code execution (security-audit.md #1). So mount
-    # the whole tree READ-ONLY and allowlist writes back on top: a future top-level
-    # entry then defaults to non-writable (fail-closed) instead of silently
-    # host-executable. ~ is left unexpanded so docker compose expands it against the
-    # invoking host user's home, matching today's behavior.
+    # ~/.claude is a dedicated per-project Docker named volume, fully decoupled from
+    # the host's ~/.claude — nothing on the host filesystem is involved. This is a
+    # net security improvement over the old read-only-host-bind + tmpfs-allowlist:
+    #
+    #   * #1 (host RCE) is eliminated structurally: the volume is never read by the
+    #     *host* claude, so hooks / commands/ / settings.json a compromised agent
+    #     writes only ever execute inside the sandbox it already controls. That is
+    #     why the whole tree can now be read-write — the read-only base existed only
+    #     to stop writes reaching a host-executed path, which no longer exists.
+    #   * #2 (cross-project leak) is eliminated: the volume is per-project (keyed on
+    #     the slug below), so no other project's transcripts / history / MCP configs
+    #     are reachable. This also closes the deferred ~/.claude.json residual — see
+    #     CLAUDE_CONFIG_DIR below.
+    #   * Residual: intra-project persistence (an agent can plant a hook that fires
+    #     on THIS project's next run), which never crosses out of a sandbox the agent
+    #     already controls. See docs/security-audit.md.
+    #
+    # Setting CLAUDE_CONFIG_DIR to the mountpoint pulls ALL of Claude Code's state —
+    # settings.json, .credentials.json, projects/ (transcripts + memory), and
+    # .claude.json — inside this one volume. (.claude.json defaults to $HOME outside
+    # the mount; CLAUDE_CONFIG_DIR relocates it to $CLAUDE_CONFIG_DIR/.claude.json.)
+    # Transcripts/memory therefore persist per-project across runs automatically
+    # (named volumes survive `docker compose run --rm`), so no host projects/<slug>
+    # bind or pre-creation is needed anymore.
     slug = re.sub(r"[^a-zA-Z0-9]", "-", project_dir)
+    claude_volume = f"cc-claude-{slug}"
     volumes.append(
-        {"type": "bind", "source": "~/.claude", "target": CLAUDE_DIR, "read_only": True}
+        {"type": "volume", "source": claude_volume, "target": CLAUDE_DIR}
     )
-    for name in CLAUDE_EPHEMERAL_DIRS:
-        # mode 0o1777 (sticky, world-writable, serialized by yaml.dump as its
-        # decimal 1023): a docker tmpfs is root-owned root:root 0755 by default,
-        # but claude runs as the unprivileged hostuser via gosu and must be able to
-        # write these — e.g. shell-snapshots is required by the Bash tool.
-        volumes.append(
-            {"type": "tmpfs", "target": f"{CLAUDE_DIR}/{name}", "tmpfs": {"mode": 0o1777}}
-        )
-    # history.jsonl is every prompt from every project — mask it (empty, read-only).
-    volumes.append(
-        {
-            "type": "bind",
-            "source": "/dev/null",
-            "target": f"{CLAUDE_DIR}/history.jsonl",
-            "read_only": True,
-        }
-    )
-    # This project's own transcript/memory/todo dir MUST persist across sessions
-    # (it holds the memory system). Bind it read-write on top of the tmpfs'd
-    # projects/. The launcher pre-creates the host dir so it's owned by the user,
-    # not root-created by the bind (see init-cc.sh).
-    volumes.append(
-        {
-            "type": "bind",
-            "source": f"~/.claude/projects/{slug}",
-            "target": f"{CLAUDE_DIR}/projects/{slug}",
-            "read_only": False,
-        }
-    )
-    # OAuth credentials. With API-key-file auth the container doesn't need them, so
-    # mask the host token rather than expose it read-only through the base mount.
-    # Otherwise (OAuth login) the agent needs it and token refresh must persist.
-    if api_key_file:
-        volumes.append(
-            {
-                "type": "bind",
-                "source": "/dev/null",
-                "target": f"{CLAUDE_DIR}/.credentials.json",
-                "read_only": True,
-            }
-        )
-    else:
-        volumes.append(
-            {
-                "type": "bind",
-                "source": "~/.claude/.credentials.json",
-                "target": f"{CLAUDE_DIR}/.credentials.json",
-                "read_only": False,
-            }
-        )
-    # NOTE: ~/.claude.json is still mounted read-write and unmasked. It carries
-    # cross-project config (project list, MCP server configs which often hold
-    # tokens), so it remains a residual read leak (security-audit.md #2/#3, the
-    # deferred half). Splitting it needs a filtered view and is tracked separately.
-    volumes.append(
-        {
-            "type": "bind",
-            "source": "~/.claude.json",
-            "target": "/home/hostuser/.claude.json",
-        }
-    )
+    # Auth: with anthropic_api_key_file the key arrives as a Docker secret (below)
+    # and never touches the volume. Without it, the agent uses OAuth — a fresh
+    # volume simply prompts an interactive `claude` login on first run, and the
+    # token then persists inside the volume. Either way there is no host credential
+    # bind, so the old null-mask login-success-then-fail loop cannot occur.
 
     # Redirect the project-level .claude/ execution context into the gitignored
     # .cc-docker/.claude/ (scaffolded here). This overlays $PROJECT_DIR/.claude,
@@ -440,6 +378,20 @@ def main():
     if git_cfg.get("email"):
         environment["GIT_USER_EMAIL"] = git_cfg["email"]
     environment["PROJECT_DIR"] = project_dir
+    # Point Claude Code's whole config dir at the per-project volume mounted at
+    # CLAUDE_DIR, so .claude.json (which otherwise lives at $HOME, outside the
+    # mount) and every other config/state file land inside the volume.
+    environment["CLAUDE_CONFIG_DIR"] = CLAUDE_DIR
+    # Forward the invoking host user's ids so cc-wrapper.sh can create `hostuser`
+    # without stat-ing a mount. The ~/.claude volume is root-owned on first mount,
+    # so the old "stat the .claude bind to recover the host UID" fallback no longer
+    # works; passing the ids explicitly is both robust and independent of mounts.
+    host_uid_env = os.environ.get("HOST_UID")
+    host_gid_env = os.environ.get("HOST_GID")
+    if host_uid_env:
+        environment["CC_HOST_UID"] = host_uid_env
+    if host_gid_env:
+        environment["CC_HOST_GID"] = host_gid_env
     if config.get("permission_mode"):
         environment["CC_PERMISSION_MODE"] = config["permission_mode"]
     environment.update(env_cfg)
@@ -468,16 +420,14 @@ def main():
         service["secrets"] = ["anthropic_api_key"]
 
     compose = {"services": {"cc": service}}
+    # Declare the per-project ~/.claude volume. The explicit `name:` pins the real
+    # Docker volume name (otherwise compose prefixes it with the project name),
+    # keeping it stable across runs; named volumes are not removed by `run --rm`.
+    compose["volumes"] = {claude_volume: {"name": claude_volume}}
     if api_key_file:
         compose["secrets"] = {"anthropic_api_key": {"file": api_key_file}}
 
     OUTPUT_PATH.write_text(HEADER + yaml.dump(compose, sort_keys=False, default_flow_style=False))
-
-    # Sidecar: the ~/.claude/projects/<slug> host dir this compose binds read-write
-    # must exist and be user-owned *before* `docker compose run` (else docker
-    # root-creates it and the agent can't write its transcripts). cc-config can't
-    # see the host ~/.claude, so it hands the slug to the launcher to mkdir.
-    SLUG_SIDECAR.write_text(slug + "\n")
 
     # cc-config runs as root, so anything it writes under /out is root-owned on
     # the host. Chown it all back to the invoking host user (the `cc` launcher
@@ -487,7 +437,6 @@ def main():
     if host_uid and host_gid:
         uid, gid = int(host_uid), int(host_gid)
         os.chown(OUTPUT_PATH, uid, gid)
-        os.chown(SLUG_SIDECAR, uid, gid)
         os.chown(OVERLAY_DIR, uid, gid)
         if overlay_settings.exists():
             os.chown(overlay_settings, uid, gid)

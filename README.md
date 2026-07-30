@@ -11,11 +11,11 @@ Claude Code is a capable agent with broad filesystem and shell access. Run direc
 Running Claude inside a per-project container fixes that. The container only sees:
 
 - The current project directory (at its host path)
-- Your Claude auth and settings: `/home/hostuser/.claude` — mounted **read-only**, with other projects' transcripts, prompt history, and caches masked (only the current project's transcript dir is bound read-write) — plus `/home/hostuser/.claude.json`
+- A **dedicated per-project Docker volume** for Claude's config/state, mounted at `/home/hostuser/.claude` (with `CLAUDE_CONFIG_DIR` pointed at it). It is created fresh per project and never touches your host `~/.claude` — so your host Claude config, credentials, and every other project's transcripts/history are simply not present in the container.
 
-It does **not** see other repos on your machine, your home directory, SSH keys, or any sibling project's working tree. A prompt injection inside project A cannot read project B's code, because project B isn't mounted — and other projects' Claude transcripts and prompt history under `~/.claude` are masked as well, so they can't be exfiltrated either.
+It does **not** see other repos on your machine, your home directory, SSH keys, your host `~/.claude`, or any sibling project's working tree. A prompt injection inside project A cannot read project B's code, because project B isn't mounted — and project B's Claude transcripts, prompt history, and MCP configs live in B's own volume, so they can't be exfiltrated either.
 
-> One residual gap: `~/.claude.json` is still exposed read-write, so its project list and per-project MCP server configs (which may hold tokens) remain visible cross-project. Isolating it is tracked in `docs/security-audit.md` (finding #2).
+> Because the config volume is decoupled from the host, it is mounted fully read-write with no masking, and it is a net security improvement over the previous host bind mount: a compromised agent can no longer write a hook into your *host* `~/.claude` execution context, and there is no cross-project `~/.claude.json` leak. See `docs/security-audit.md` (findings #1/#2).
 
 What this does **not** do:
 
@@ -230,9 +230,9 @@ HOST_GID=$(stat -c "%g" "$PROJECT_DIR")
 
 It then creates a `hostgroup`/`hostuser` pair with those IDs and drops privileges to that user via [gosu](https://packages.debian.org/bookworm/gosu) before running `claude`. The result: any file Claude creates inside the project directory is owned by you on the host — no `root`-owned artifacts, no `chown` cleanup after the container exits.
 
-You don't have to bind-mount the whole project — mounting only selected subdirectories (to limit what Claude can see) is a supported setup too. If `$PROJECT_DIR` itself isn't bind-mounted, Docker creates it inside the container owned by `root`, so the entrypoint falls back to the always-mounted `~/.claude`/`~/.claude.json` mounts to recover your real host UID/GID.
+You don't have to bind-mount the whole project — mounting only selected subdirectories (to limit what Claude can see) is a supported setup too. The `cc` launcher forwards your host UID/GID to the container as `CC_HOST_UID`/`CC_HOST_GID`, so the entrypoint uses those directly (independent of any mount); when `$PROJECT_DIR` isn't bind-mounted it no longer needs to stat a mount to recover them.
 
-The same ownership logic applies to the config mounts. `~/.claude` and `~/.claude.json` are mounted into `/home/hostuser/.claude` and `/home/hostuser/.claude.json`, so credentials and settings are read and written with your UID — they stay in sync with your host login without any permission tricks.
+The Claude config lives in a per-project Docker **named volume** (`cc-claude-<slug>`) mounted at `/home/hostuser/.claude`, not a host bind. It's root-owned on first mount, so the entrypoint chowns the mountpoint to your UID before dropping to `hostuser`; from then on the volume persists across runs (Docker doesn't remove named volumes on `run --rm`), holding this project's credentials, settings, transcripts, and memory — isolated from the host and from other projects.
 
 ### The two-phase entrypoint
 
@@ -287,9 +287,9 @@ compose file's volume mounts are the key pieces:
 
 | Mount / setting | Purpose |
 |-----------------|---------|
-| `${PWD}:${PWD}` + `working_dir` + `PROJECT_DIR` | Mounts your project at its host path inside the container. Using the same path on both sides means Claude Code's per-project state bucket (keyed by cwd) is unique per project on the host — sessions from different repos stay separate in `~/.claude/projects/`. Also the source of the host UID/GID used to create `hostuser`. |
-| `~/.claude:/home/hostuser/.claude` | Persists Claude credentials and settings; mounted at the `hostuser` home path so ownership matches your host login |
-| `~/.claude.json:/home/hostuser/.claude.json` | Persists Claude's top-level auth/config state; same ownership rationale |
+| `${PWD}:${PWD}` + `working_dir` + `PROJECT_DIR` | Mounts your project at its host path inside the container. Using the same path on both sides means Claude Code's per-project state bucket (keyed by cwd) is unique per project on the host — sessions from different repos stay separate in `~/.claude/projects/`. |
+| `cc-claude-<slug>:/home/hostuser/.claude` (+ `CLAUDE_CONFIG_DIR`) | A per-project Docker **named volume** holding all of Claude's config/state — credentials, `settings.json`, transcripts, memory, and `.claude.json`. Fully read-write, decoupled from the host, isolated per project, and persistent across runs. `CLAUDE_CONFIG_DIR` points Claude Code at it so even `.claude.json` (normally at `$HOME`) lands inside the volume. To inspect it from the host: `docker run --rm -v cc-claude-<slug>:/v alpine ls /v`. |
+| `CC_HOST_UID` / `CC_HOST_GID` (env) | Your host UID/GID, forwarded so the entrypoint can create `hostuser` and chown the config volume without stat-ing a mount. |
 | `.cc-docker/.claude:$PROJECT_DIR/.claude` | Overlays the project-level Claude context (settings, plans, todos) into the gitignored `.cc-docker/.claude/`, so Claude's project-level writes never land in the committed/shared project tree. Scaffolded by `cc` on first run (`.cc-docker/.claude/settings.json`), and `cc` also adds `.claude/` to your project's `.gitignore` so the overlay doesn't show up as untracked inside the container. |
 
 ## Configuring cc-docker (`cc-docker.yml`)
@@ -323,7 +323,7 @@ both, or neither, is a validation error).
 | `mounts` | list | no | Project paths to bind-mount. Each entry is `{path, exclude}`: `path` (required) is relative to the project root — use `"."` for the whole project; `exclude` is a list of glob patterns (relative to `path`) to shadow out with a `tmpfs` (directories) or a read-only `/dev/null` bind (files). |
 | `extra_mounts` | list | no | Raw docker compose volume entries, appended verbatim — no validation. |
 | `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. `auto` forwards Wayland only; X11 needs an explicit `x11` (trusted cookie = full input access — see #5). See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
-| `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to keep using the mounted `~/.claude` OAuth login. See [API key auth](#api-key-auth-optional). |
+| `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to use per-project OAuth login (an interactive `claude` login on first run, persisted in the project's config volume). See [API key auth](#api-key-auth-optional). |
 | `docker_socket` | boolean | no | If true, mounts the host's `/var/run/docker.sock` into the container and grants `hostuser` access to it. Grants **root-equivalent access to the host Docker daemon** — see [Why cc-dev is restricted to this repo](#why-cc-dev-is-restricted-to-this-repo) for what that means. Defaults to `false`. Note `base` ships no `docker` CLI, so a plain `modules:` project still needs one installed some other way to actually use the socket. |
 | `permission_mode` | string | no | Passed through to `claude --permission-mode` (`acceptEdits` \| `auto` \| `bypassPermissions` \| `manual` \| `dontAsk` \| `plan`). Omit to use claude's own default. Only takes effect with `modules:` — frozen `legacy/` (`image:`) entrypoints predate this option and ignore it. |
 
@@ -399,11 +399,13 @@ it happens to fall under one of the configured mounts.
 
 ### API key auth (optional)
 
-By default, `claude` inside the container authenticates the same way it does on the host: via
-the OAuth login state in the mounted `~/.claude` / `~/.claude.json` (see
-[The `hostuser` model](#the-hostuser-model)). If you'd rather use a raw Anthropic API key instead
-— e.g. for a CI-like box with no interactive login, or a key scoped separately from your personal
-account — set `anthropic_api_key_file` in `cc-docker.yml` to a host file containing just the key:
+By default, `claude` inside the container authenticates via OAuth: because the config volume
+starts empty and is decoupled from your host `~/.claude`, the first `claude` run in a project
+prompts an interactive OAuth login, and the resulting token persists in that project's volume for
+later runs (see [The `hostuser` model](#the-hostuser-model)). If you'd rather use a raw Anthropic
+API key instead — e.g. for a CI-like box with no interactive login, or a key scoped separately
+from your personal account — set `anthropic_api_key_file` in `cc-docker.yml` to a host file
+containing just the key:
 
 ```yaml
 anthropic_api_key_file: ~/.config/cc-docker/anthropic_api_key
@@ -421,9 +423,9 @@ never appears in the generated `docker-compose.yml`, in `docker inspect`, or in 
 environment. `run-as-hostuser.sh` reads the file and exports it as `ANTHROPIC_API_KEY` right
 before launching `claude`.
 
-This field is optional and off by default: omit it and nothing changes — auth keeps working
-exactly as it does today, off the mounted `~/.claude` state. When set, it takes precedence for
-that run; `claude` records the one-time key approval in `~/.claude.json`, so later runs (with or
+This field is optional and off by default: omit it and auth falls back to the per-project OAuth
+login described above. When set, it takes precedence for that run; `claude` records the one-time
+key approval in `~/.claude.json` (inside the project's config volume), so later runs (with or
 without the key) won't need to re-approve it.
 
 ### IntelliJ: schema-validated editing
@@ -507,8 +509,10 @@ source, not the `cc-dev` container. cc-docker's same-path convention
 (`${PWD}:${PWD}`) and build contexts resolve correctly this way. But a `~`
 in a mount source is expanded by whichever process reads the compose file —
 inside `cc-dev`, `~` is `/home/hostuser`, which the host daemon can't resolve.
-So launching a full nested interactive `cc` session (which mounts
-`~/.claude`) from inside `cc-dev` won't work correctly. Use `cc-dev` for
+The config dir is now a **named volume** (`cc-claude-<slug>`), which the host
+daemon resolves fine, so that particular breakage is gone; but any remaining
+home-relative bind source in a nested compose is still resolved against the
+wrong home. Use `cc-dev` for
 building, editing, and non-interactive smoke tests; do full interactive runs
 from the host.
 
@@ -606,9 +610,9 @@ When reverse-engineering a raw `docker-compose.yml`, migrate-cc parses the `cc` 
 list (both short `src:tgt` and long `type: bind` forms) and sorts each entry: project binds (same
 host path in and out, at or under the compose's `working_dir`) become `mounts:` entries — `path: .`
 for the whole root, or a relative `path:` for a subdirectory; the host Docker socket becomes
-`docker_socket: true`; the mounts cc-config re-adds itself (the `~/.claude*` pair and the display
-sockets) are dropped; and anything else (custom host paths, caches, named volumes) is carried into
-`extra_mounts:` verbatim. A wholly read-only project maps to `readonly: true`; a mix of read-only
+`docker_socket: true`; mounts cc-config now re-adds itself (any legacy `~/.claude*` host binds — it
+provides the config volume instead — and the display sockets) are dropped; and anything else (custom
+host paths, caches, named volumes) is carried into `extra_mounts:` verbatim. A wholly read-only project maps to `readonly: true`; a mix of read-only
 and read-write project mounts can't be expressed by the all-or-nothing `readonly:` flag, so migrate-cc
 leaves them read-write and warns.
 
