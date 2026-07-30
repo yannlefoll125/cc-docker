@@ -18,5 +18,10 @@ permission_mode_args=()
 [ -n "$CC_PERMISSION_MODE" ] && permission_mode_args=(--permission-mode "$CC_PERMISSION_MODE")
 
 clear
-claude --append-system-prompt "$(cat /sandbox.md)" "${permission_mode_args[@]}" "$@"
+# --settings /banner-settings.json registers the SessionStart banner hook
+# (/cc-banner.sh). Passed explicitly here so it's trusted and merges with the
+# user's own settings rather than depending on the config volume's contents.
+claude --append-system-prompt "$(cat /sandbox.md)" \
+       --settings /banner-settings.json \
+       "${permission_mode_args[@]}" "$@"
 clear

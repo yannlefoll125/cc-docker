@@ -105,7 +105,9 @@ def main():
         "COPY cc-wrapper.sh /cc-wrapper.sh",
         "COPY run-as-hostuser.sh /run-as-hostuser.sh",
         "COPY sandbox.md /sandbox.md",
-        "RUN chmod +x /cc-wrapper.sh /run-as-hostuser.sh",
+        "COPY cc-banner.sh /cc-banner.sh",
+        "COPY banner-settings.json /banner-settings.json",
+        "RUN chmod +x /cc-wrapper.sh /run-as-hostuser.sh /cc-banner.sh",
         'ENTRYPOINT ["/cc-wrapper.sh"]',
     ]
 
