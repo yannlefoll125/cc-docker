@@ -130,6 +130,9 @@ EOF
 # already built (fast path). Pass `--build` (or set CC_BUILD=1) to assemble and
 # build first; without it, a missing image fails fast with a build hint rather than
 # a confusing registry-pull error.
+#
+# Pass `--generate-only` (or set CC_GENERATE_ONLY=1) to regenerate the compose file
+# from cc-docker.yml and stop — no assemble, no build, no claude.
 cc() {
     # Self-refresh: pick up edits/updates to init-cc.sh without a manual re-source.
     # Re-source then re-exec so THIS invocation runs the latest on-disk version; the
@@ -142,12 +145,22 @@ cc() {
     unset _CC_REEXEC
 
     # Build gating: default is run-only (no build). A leading `--build` or CC_BUILD=1
-    # opts into the assemble+build path. Consume the flag so it never reaches claude.
+    # opts into the assemble+build path.
+    #
+    # Generate-only: `--generate-only` (or CC_GENERATE_ONLY=1) regenerates the compose
+    # file from cc-docker.yml and stops — it does NOT assemble, build, or run claude.
+    # Useful for inspecting the generated .cc-docker/docker-compose.yml.
+    #
+    # Consume the leading flags so they never reach claude.
     local do_build="${CC_BUILD:-}"
-    if [[ "${1:-}" == "--build" ]]; then
-        do_build=1
-        shift
-    fi
+    local generate_only="${CC_GENERATE_ONLY:-}"
+    while true; do
+        case "${1:-}" in
+            --build)        do_build=1; shift ;;
+            --generate-only) generate_only=1; shift ;;
+            *) break ;;
+        esac
+    done
 
     local dir="$PWD"
     while [[ ! -d "$dir/.cc-docker" && "$dir" != "/" ]]; do
@@ -205,6 +218,13 @@ cc() {
             -v "$dir":/project:ro \
             -v "$target_dir":/out \
             cc-config || return 1
+
+        # Generate-only: the compose file (and any modular sidecars) now exist; stop
+        # here without assembling, building, or launching claude.
+        if [[ -n "$generate_only" ]]; then
+            echo "Generated $compose_file (generate-only: not building or running)."
+            return 0
+        fi
 
         # Modular mode: cc-config wrote .cc-docker/assembled.tag (+ assembled.modules).
         # With --build, assemble the per-project Dockerfile, build its blocks, then the

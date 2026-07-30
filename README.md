@@ -99,6 +99,11 @@ Defined by `init-cc.sh` alongside `init-cc`. On each invocation it:
    image (under a lock). All are plain `docker build`s, so unchanged pieces are cache no-ops.
 4. Runs `docker compose -f .cc-docker/docker-compose.yml run --rm cc "$@"`.
 
+Pass `--generate-only` (or set `CC_GENERATE_ONLY=1`) to stop after step 2/3 — `cc`
+regenerates `.cc-docker/docker-compose.yml` (and the modular sidecars) from `cc-docker.yml`
+and returns without assembling, building, or launching claude. Handy for inspecting the
+generated compose file or wiring it into other tooling.
+
 A `cc-docker.yml` is required. A project with only a hand-written
 `.cc-docker/docker-compose.yml` and no `cc-docker.yml` (the old "raw compose" setup) is **no
 longer run**: that file lives in the read-write project mount, so a compromised agent could
@@ -168,8 +173,9 @@ mounts:
 **3. Build the image, then run Claude Code:**
 
 ```bash
-cc --build   # first run (and after any image/module change): assemble + build
-cc           # subsequent runs: just launch the already-built image
+cc --build          # first run (and after any image/module change): assemble + build
+cc                  # subsequent runs: just launch the already-built image
+cc --generate-only  # only regenerate docker-compose.yml from cc-docker.yml; don't build or run
 ```
 
 `cc` works from the project root or any subdirectory (see [`cc` (the launcher)](#cc-the-launcher)).
