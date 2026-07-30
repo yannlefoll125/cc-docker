@@ -187,6 +187,22 @@ host, in exchange for image paste.
 cookie (`xauth generate … untrusted`) rather than forwarding the trusted one. Wayland is
 materially safer (no global input capture) and can stay on `auto`.
 
+**Status (2026-07-30 — fixed):** `auto` (still the default) now forwards **Wayland only** —
+on an X11-only host it forwards nothing and warns, pointing at the explicit opt-in. Trusted
+X11 is forwarded **only** on an explicit `display: x11`, which also emits a per-run warning
+that it grants the container keylogging + keystroke-injection over the host session. This
+keeps the safe Wayland convenience on by default (Wayland isolates clients and has no global
+input capture) while removing the silent trusted-X11 default — the audit's "flip to
+disabled", scoped to just the unsafe transport. The untrusted-cookie alternative was
+**skipped deliberately**: the X Security extension blocks an untrusted client from reading
+selections owned by trusted clients (the same reason `ssh -X` breaks clipboard where
+`ssh -Y` works), so an untrusted cookie would forward a display that cannot paste — defeating
+the one feature this exists for. Also fixed a robustness bug in the same function: explicit
+`x11` with `XAUTHORITY` unset on the host used to emit the malformed volume
+`:/home/hostuser/.Xauthority:ro`; it now warns and skips. Verified: `auto`+Wayland forwards
+the Wayland socket; `auto`+X11 skips; explicit `x11` forwards only when `XAUTHORITY` is set,
+else skips; `disabled` forwards nothing.
+
 ### 6. `readonly: true` gives a false sense of a read-only sandbox
 
 It applies only to the `mounts` list (`generate-compose.py:110`). The `~/.claude` mounts
@@ -258,7 +274,9 @@ cc-docker itself" section.
    `mounts[].path` to the project (#4)~~ — **done 2026-07-30** (whole-`.cc-docker/` ro bind +
    legacy compose mode retired; `mounts[].path` containment check + schema pattern; see
    #3/#4 status notes).
-3. Flip `display` to `disabled` by default, or switch to untrusted X cookies (#5).
+3. ~~Flip `display` to `disabled` by default, or switch to untrusted X cookies (#5)~~ —
+   **done 2026-07-30** (`auto` forwards Wayland only; trusted X11 requires an explicit
+   `display: x11` opt-in; untrusted cookies skipped — they'd break clipboard; see #5 status).
 4. Mask `.git/hooks` + `.git/config` (#7), fix the `readonly` gaps (#6), add
    `no-new-privileges` / `cap_drop`.
 

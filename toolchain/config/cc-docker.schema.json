@@ -47,7 +47,7 @@
     },
     "display": {
       "type": "string",
-      "description": "Forward the host's display-server clipboard socket into the container, so `claude` can paste images from the host clipboard. 'auto' detects Wayland vs X11 from the host env vars the `cc` launcher forwards (CC_HOST_WAYLAND_DISPLAY/CC_HOST_DISPLAY) and does nothing if neither is set. 'wayland'/'x11' force a mode. 'disabled' turns off forwarding. (Not 'off': YAML 1.1 parses a bare 'off' as the boolean false.)",
+      "description": "Forward the host's display-server clipboard socket into the container, so `claude` can paste images from the host clipboard. 'auto' (default) forwards Wayland when present, but on an X11-only host does NOT forward: X11 has no client isolation, so a forwarded (trusted) cookie would let the container keylog the session and inject keystrokes into host windows (security-audit.md #5). 'wayland' forces Wayland. 'x11' forces X11 — an explicit opt-in to that trusted-cookie risk, for a project you trust. 'disabled' turns off forwarding. (Not 'off': YAML 1.1 parses a bare 'off' as the boolean false.)",
       "enum": ["auto", "wayland", "x11", "disabled"],
       "default": "auto"
     },

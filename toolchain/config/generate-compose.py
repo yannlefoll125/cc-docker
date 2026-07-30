@@ -209,12 +209,21 @@ def apply_display(config, environment, volumes):
     the values written into the compose file are ${VAR}-style references so
     `docker compose run` resolves them fresh from the host shell's own
     environment every time, instead of baking in a value that could go stale.
+
+    X11 is forwarded only on an *explicit* `display: x11`, never from `auto`.
+    X11 has no inter-client isolation, so a forwarded (trusted) cookie lets the
+    container keylog the session, capture any window, and inject synthetic
+    keystrokes into host windows via XTEST — i.e. host RCE (security-audit.md
+    #5). Wayland isolates clients and has no global input capture, so `auto`
+    forwards it freely; on an X11-only host `auto` skips forwarding and points
+    the user at the explicit opt-in.
     """
     mode = config.get("display", "auto")
     if mode == "disabled":
         return
 
-    if mode == "auto":
+    auto = mode == "auto"
+    if auto:
         if os.environ.get("CC_HOST_WAYLAND_DISPLAY"):
             mode = "wayland"
         elif os.environ.get("CC_HOST_DISPLAY"):
@@ -232,6 +241,33 @@ def apply_display(config, environment, volumes):
         environment.setdefault("XDG_RUNTIME_DIR", "${XDG_RUNTIME_DIR}")
         volumes.append("${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}")
     elif mode == "x11":
+        if auto:
+            # auto never forwards trusted X11 (no client isolation → keylogging +
+            # XTEST keystroke injection into host windows = host RCE;
+            # security-audit.md #5). Require an explicit `display: x11` opt-in.
+            warn(
+                "display: auto detected an X11 host and will NOT forward it: X11 "
+                "has no client isolation, so the container would gain full input "
+                "access to your session (keylogging, synthetic keystrokes into "
+                "host windows). Set 'display: x11' explicitly to enable it anyway, "
+                "or use Wayland."
+            )
+            return
+        # Explicit display: x11 — informed opt-in to the trusted-cookie risk. The
+        # compose writes ${XAUTHORITY} for `docker compose run` to resolve; if the
+        # host shell has no XAUTHORITY there's no cookie to forward (and the naive
+        # mount would be the malformed ':/home/hostuser/.Xauthority:ro'), so skip.
+        if not os.environ.get("CC_HOST_XAUTHORITY"):
+            warn(
+                "display: x11 needs XAUTHORITY set on the host (the X cookie to "
+                "forward) but it is unset — skipping X11 forwarding."
+            )
+            return
+        warn(
+            "display: x11 forwards a TRUSTED X cookie — the container can keylog "
+            "your session and inject keystrokes into host windows. Use it only "
+            "for a project you trust with that access."
+        )
         environment.setdefault("DISPLAY", "${DISPLAY}")
         environment.setdefault("XAUTHORITY", "/home/hostuser/.Xauthority")
         volumes.append("/tmp/.X11-unix:/tmp/.X11-unix")

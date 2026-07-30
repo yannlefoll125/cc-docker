@@ -322,7 +322,7 @@ both, or neither, is a validation error).
 | `readonly` | boolean | no | If true, all mounts declared in `mounts` are read-only. Defaults to `false`. |
 | `mounts` | list | no | Project paths to bind-mount. Each entry is `{path, exclude}`: `path` (required) is relative to the project root — use `"."` for the whole project; `exclude` is a list of glob patterns (relative to `path`) to shadow out with a `tmpfs` (directories) or a read-only `/dev/null` bind (files). |
 | `extra_mounts` | list | no | Raw docker compose volume entries, appended verbatim — no validation. |
-| `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
+| `display` | string | no | `auto` (default) \| `wayland` \| `x11` \| `disabled` — forwards the host clipboard display socket so `claude` can paste images. `auto` forwards Wayland only; X11 needs an explicit `x11` (trusted cookie = full input access — see #5). See [Clipboard image paste](#clipboard-image-paste-x11wayland). |
 | `anthropic_api_key_file` | string | no | Host path to a file containing your raw Anthropic API key. Delivered as a Docker secret and exported as `ANTHROPIC_API_KEY`. Optional — omit to keep using the mounted `~/.claude` OAuth login. See [API key auth](#api-key-auth-optional). |
 | `docker_socket` | boolean | no | If true, mounts the host's `/var/run/docker.sock` into the container and grants `hostuser` access to it. Grants **root-equivalent access to the host Docker daemon** — see [Why cc-dev is restricted to this repo](#why-cc-dev-is-restricted-to-this-repo) for what that means. Defaults to `false`. Note `base` ships no `docker` CLI, so a plain `modules:` project still needs one installed some other way to actually use the socket. |
 | `permission_mode` | string | no | Passed through to `claude --permission-mode` (`acceptEdits` \| `auto` \| `bypassPermissions` \| `manual` \| `dontAsk` \| `plan`). Omit to use claude's own default. Only takes effect with `modules:` — frozen `legacy/` (`image:`) entrypoints predate this option and ignore it. |
@@ -363,12 +363,22 @@ docker run --rm \
 Getting the clipboard's *contents* across the container boundary needs the host's display socket
 forwarded in — a container has no access to the host's X11/Wayland session by default. `cc`
 handles this automatically: it reads `$WAYLAND_DISPLAY`/`$DISPLAY` etc. from your host shell and
-forwards them to `cc-config`, which wires up the right mount and env vars for you. Nothing to
-configure — `display: auto` is the default.
+forwards them to `cc-config`, which wires up the right mount and env vars for you. `display: auto`
+is the default.
+
+**Wayland forwards automatically; X11 does not.** Under `auto`, a Wayland session is forwarded
+freely, but an X11 session is **not** — X11 has no inter-client isolation, so forwarding its
+(trusted) cookie would let the container keylog your whole session and inject synthetic
+keystrokes into host windows (arbitrary host command execution — see `docs/security-audit.md`
+#5). On an X11-only host, `auto` forwards nothing and prints a warning. To use image paste on
+X11 anyway, set `display: x11` explicitly: that's an informed opt-in to the trusted-cookie risk,
+and each run reminds you of it. (Untrusted X cookies aren't offered — the X Security extension
+would then block the container from reading the clipboard, defeating the point, the same way
+`ssh -X` breaks paste where `ssh -Y` works.)
 
 To see what it detected, check the generated `.cc-docker/docker-compose.yml` for a
-`WAYLAND_DISPLAY`/`DISPLAY` entry under `environment`. If neither your host's Wayland nor X11
-session is set (e.g. a headless box, or you ran `cc-config` by hand without going through `cc`),
+`WAYLAND_DISPLAY`/`DISPLAY` entry under `environment`. If no display was forwarded (a headless
+box, an X11 host under `auto`, or you ran `cc-config` by hand without going through `cc`),
 generation prints a warning and skips forwarding — pasting just won't work, nothing else is
 affected.
 
@@ -377,7 +387,7 @@ Override with the `display` field in `cc-docker.yml` if needed:
 ```yaml
 display: disabled  # disable forwarding entirely
 # display: wayland # force Wayland instead of auto-detecting
-# display: x11     # force X11 instead of auto-detecting
+# display: x11     # force X11 (forwards a TRUSTED cookie — full input access; trusted projects only)
 ```
 
 (Not `off`: YAML parses a bare `off` as the boolean `false`, which would fail schema
