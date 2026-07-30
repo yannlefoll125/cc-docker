@@ -28,6 +28,8 @@ ENV COMPOSE_PROJECT_NAME=cc-dev
 COPY bootstrap/cc-wrapper.sh /cc-wrapper.sh
 COPY bootstrap/run-as-hostuser.sh /run-as-hostuser.sh
 COPY bootstrap/sandbox.md /sandbox.md
-RUN chmod +x /cc-wrapper.sh /run-as-hostuser.sh
+COPY bootstrap/cc-banner.sh /cc-banner.sh
+COPY bootstrap/banner-settings.json /banner-settings.json
+RUN chmod +x /cc-wrapper.sh /run-as-hostuser.sh /cc-banner.sh
 
 ENTRYPOINT ["/dev-wrapper.sh"]

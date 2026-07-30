@@ -267,6 +267,20 @@ cc() {
                 echo "Run 'cc --build' (or set CC_BUILD=1) to assemble and build it." >&2
                 return 1
             fi
+        elif [[ -n "$do_build" ]]; then
+            # Legacy `image:` mode (no assembled.tag): the image is supplied
+            # ready-made, so `--build` has nothing to assemble here. If it's one of
+            # cc-docker's own toolchain images (e.g. cc-dev), it's rebuilt by the
+            # top-level build.sh, NOT by `cc --build` — point there so a Dockerfile
+            # edit under toolchain/ doesn't look like it was silently ignored.
+            local cfg_image
+            cfg_image="$(grep -E '^image:' "$config_file" 2>/dev/null | sed -E "s/^image:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+            if [[ "$cfg_image" == cc-* ]]; then
+                echo "Note: '$cfg_image' is a cc-docker toolchain image; '--build' does not rebuild it." >&2
+                echo "Rebuild it with 'make build' (or './build.sh' with no args) in $CC_DOCKER_DIR." >&2
+            else
+                echo "Note: this project pins 'image: $cfg_image'; '--build' has nothing to assemble." >&2
+            fi
         fi
     elif [[ -f "$compose_file" ]]; then
         # Legacy compose mode (a hand-written docker-compose.yml with no
